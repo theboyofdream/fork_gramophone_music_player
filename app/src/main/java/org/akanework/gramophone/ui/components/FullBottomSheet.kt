@@ -34,8 +34,10 @@ import android.os.Parcelable
 import android.text.format.DateFormat
 import android.util.AttributeSet
 import android.view.AbsSavedState
+import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
@@ -354,6 +356,48 @@ class FullBottomSheet
             activity.startFragment(DetailDialogFragment()) {
                 putString("Id", instance?.currentMediaItem?.mediaId)
             }
+        }
+
+        val coverGestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            private val SWIPE_THRESHOLD = 100
+            private val SWIPE_VELOCITY_THRESHOLD = 100
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (e1 == null) return false
+                val diffX = e2.x - e1.x
+                val diffY = e2.y - e1.y
+                if (kotlin.math.abs(diffX) > kotlin.math.abs(diffY) &&
+                    kotlin.math.abs(diffX) > SWIPE_THRESHOLD &&
+                    kotlin.math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD
+                ) {
+                    if (diffX > 0) {
+                        // Swipe right -> Previous song
+                        ViewCompat.performHapticFeedback(bottomSheetFullCover, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                        instance?.seekToPrevious()
+                    } else {
+                        // Swipe left -> Next song
+                        ViewCompat.performHapticFeedback(bottomSheetFullCover, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                        instance?.seekToNext()
+                    }
+                    return true
+                }
+                return false
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                bottomSheetFullCover.performClick()
+                return true
+            }
+        })
+
+        @SuppressLint("ClickableViewAccessibility")
+        bottomSheetFullCover.setOnTouchListener { _, event ->
+            coverGestureDetector.onTouchEvent(event)
         }
 
         bottomSheetFullTitle.setOnClickListener {
