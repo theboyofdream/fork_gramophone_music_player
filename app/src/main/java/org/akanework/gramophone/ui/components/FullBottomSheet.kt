@@ -523,8 +523,10 @@ class FullBottomSheet
             instance?.seekForward()
             true
         }
-        bottomSheetShuffleButton.addOnCheckedChangeListener { _, isChecked ->
-            instance?.shuffleModeEnabled = isChecked
+        bottomSheetShuffleButton.setOnClickListener {
+            ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+            val current = instance?.shuffleModeEnabled == true
+            instance?.shuffleModeEnabled = !current
         }
 
         bottomSheetFullSlider.addOnChangeListener { _, value, isUser ->
@@ -548,10 +550,6 @@ class FullBottomSheet
         bottomSheetLyricButton.setOnClickListener {
             ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
             bottomSheetFullLyricView.fadInAnimation(LYRIC_FADE_TRANSITION_SEC)
-        }
-
-        bottomSheetShuffleButton.setOnClickListener {
-            ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
         }
 
         val colorSecondaryContainer =

@@ -1690,14 +1690,16 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             // when enabling shuffle, re-shuffle lists so that the first index is up to date
             Log.i(TAG, "re-shuffling playlist")
             endedWorkaroundPlayer?.let {
-                it.exoPlayer.setShuffleOrder(
-                    CircularShuffleOrder(
-                        it,
-                        it.exoPlayer.currentMediaItemIndex,
-                        it.exoPlayer.mediaItemCount,
-                        Random.nextLong()
+                if (it.exoPlayer.shuffleModeEnabled) {
+                    it.exoPlayer.setShuffleOrder(
+                        CircularShuffleOrder(
+                            it,
+                            it.exoPlayer.currentMediaItemIndex,
+                            it.exoPlayer.mediaItemCount,
+                            Random.nextLong()
+                        )
                     )
-                )
+                }
             }
         }
     }
