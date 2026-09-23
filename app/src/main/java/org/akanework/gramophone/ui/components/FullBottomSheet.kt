@@ -38,7 +38,9 @@ import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.VelocityTracker
 import android.view.View
+import kotlin.math.abs
 import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
 import android.view.WindowInsets
@@ -352,52 +354,117 @@ class FullBottomSheet
             it.animate = false
         }
 
-        bottomSheetFullCover.setOnClickListener {
-            activity.startFragment(DetailDialogFragment()) {
-                putString("Id", instance?.currentMediaItem?.mediaId)
-            }
-        }
-
-        val coverGestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-            private val SWIPE_THRESHOLD = 100
-            private val SWIPE_VELOCITY_THRESHOLD = 100
-
-            override fun onFling(
-                e1: MotionEvent?,
-                e2: MotionEvent,
-                velocityX: Float,
-                velocityY: Float
-            ): Boolean {
-                if (e1 == null) return false
-                val diffX = e2.x - e1.x
-                val diffY = e2.y - e1.y
-                if (kotlin.math.abs(diffX) > kotlin.math.abs(diffY) &&
-                    kotlin.math.abs(diffX) > SWIPE_THRESHOLD &&
-                    kotlin.math.abs(velocityX) > SWIPE_VELOCITY_THRESHOLD
-                ) {
-                    if (diffX > 0) {
-                        // Swipe right -> Previous song
-                        ViewCompat.performHapticFeedback(bottomSheetFullCover, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                        instance?.seekToPrevious()
-                    } else {
-                        // Swipe left -> Next song
-                        ViewCompat.performHapticFeedback(bottomSheetFullCover, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                        instance?.seekToNext()
-                    }
-                    return true
-                }
-                return false
-            }
-
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                bottomSheetFullCover.performClick()
-                return true
-            }
-        })
+        var coverStartX = 0f
+        var coverStartY = 0f
+        var isCoverDragging = false
+        var velocityTracker: VelocityTracker? = null
+        val swipeThreshold = 100f
 
         @SuppressLint("ClickableViewAccessibility")
-        bottomSheetFullCover.setOnTouchListener { _, event ->
-            coverGestureDetector.onTouchEvent(event)
+        bottomSheetFullCoverFrame.setOnTouchListener { view, event ->
+            if (velocityTracker == null) {
+                velocityTracker = VelocityTracker.obtain()
+            }
+            velocityTracker?.addMovement(event)
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    coverStartX = event.rawX
+                    coverStartY = event.rawY
+                    isCoverDragging = false
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = event.rawX - coverStartX
+                    val deltaY = event.rawY - coverStartY
+                    if (!isCoverDragging && abs(deltaX) > 20f && abs(deltaX) > abs(deltaY)) {
+                        isCoverDragging = true
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                    }
+                    if (isCoverDragging) {
+                        view.translationX = deltaX
+                        val progress = abs(deltaX) / (view.width.toFloat().coerceAtLeast(1f))
+                        view.alpha = (1f - progress * 0.4f).coerceIn(0.3f, 1f)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    velocityTracker?.computeCurrentVelocity(1000)
+                    val velocityX = velocityTracker?.xVelocity ?: 0f
+                    val deltaX = event.rawX - coverStartX
+                    val deltaY = event.rawY - coverStartY
+
+                    if (isCoverDragging) {
+                        val isSwipeLeft = deltaX < -swipeThreshold || velocityX < -700f
+                        val isSwipeRight = deltaX > swipeThreshold || velocityX > 700f
+
+                        if (isSwipeLeft) {
+                            val targetX = -view.width.toFloat()
+                            view.animate()
+                                .translationX(targetX)
+                                .alpha(0f)
+                                .setDuration(160)
+                                .withEndAction {
+                                    ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                                    instance?.seekToNext()
+                                    view.translationX = view.width.toFloat()
+                                    view.animate()
+                                        .translationX(0f)
+                                        .alpha(1f)
+                                        .setDuration(180)
+                                        .start()
+                                }
+                                .start()
+                        } else if (isSwipeRight) {
+                            val targetX = view.width.toFloat()
+                            view.animate()
+                                .translationX(targetX)
+                                .alpha(0f)
+                                .setDuration(160)
+                                .withEndAction {
+                                    ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                                    instance?.seekToPrevious()
+                                    view.translationX = -view.width.toFloat()
+                                    view.animate()
+                                        .translationX(0f)
+                                        .alpha(1f)
+                                        .setDuration(180)
+                                        .start()
+                                }
+                                .start()
+                        } else {
+                            view.animate()
+                                .translationX(0f)
+                                .alpha(1f)
+                                .setDuration(180)
+                                .start()
+                        }
+                    } else if (abs(deltaX) < 15f && abs(deltaY) < 15f && event.actionMasked == MotionEvent.ACTION_UP) {
+                        view.animate()
+                            .translationX(0f)
+                            .alpha(1f)
+                            .setDuration(100)
+                            .start()
+                        activity.startFragment(DetailDialogFragment()) {
+                            putString("Id", instance?.currentMediaItem?.mediaId)
+                        }
+                    } else {
+                        view.animate()
+                            .translationX(0f)
+                            .alpha(1f)
+                            .setDuration(180)
+                            .start()
+                    }
+                    velocityTracker?.recycle()
+                    velocityTracker = null
+                    isCoverDragging = false
+                    true
+                }
+
+                else -> false
+            }
         }
 
         bottomSheetFullTitle.setOnClickListener {
