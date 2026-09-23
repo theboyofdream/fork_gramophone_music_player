@@ -73,7 +73,8 @@ class SongAdapter(
     allowDiffUtils: Boolean = false,
     rawOrderExposed: Sorter.Type? = if (isSubFragment == null) Sorter.Type.ByTitleAscending else null,
     val folder: Boolean = false,
-    fallbackContext: AppCompatActivity? = null
+    fallbackContext: AppCompatActivity? = null,
+    val playlistId: Long? = null
 ) : BaseAdapter<MediaItem>
     (
     fragment,
@@ -224,7 +225,7 @@ class SongAdapter(
         } else {
             selectedItems.add(item)
         }
-        notifyItemChanged(position)
+        notifyItemChanged(position, "selection_change")
 
         if (selectedItems.isEmpty()) {
             finishSelectionMode()
@@ -240,7 +241,7 @@ class SongAdapter(
         if (initialItem != null) {
             selectedItems.add(initialItem)
         }
-        notifyDataSetChanged()
+        notifyItemRangeChanged(0, itemCount, "selection_change")
 
         actionMode = (getActivity() as? AppCompatActivity)?.startSupportActionMode(object : androidx.appcompat.view.ActionMode.Callback {
             override fun onCreateActionMode(mode: androidx.appcompat.view.ActionMode, menu: android.view.Menu): Boolean {
@@ -250,15 +251,81 @@ class SongAdapter(
             }
 
             override fun onPrepareActionMode(mode: androidx.appcompat.view.ActionMode, menu: android.view.Menu): Boolean {
-                return false
+                val hasPlaylistId = (isSubFragment == R.id.playlist && playlistId != null)
+                menu.findItem(R.id.action_remove_from_playlist)?.isVisible = hasPlaylistId
+                return true
             }
 
             override fun onActionItemClicked(mode: androidx.appcompat.view.ActionMode, menuItem: android.view.MenuItem): Boolean {
                 return when (menuItem.itemId) {
                     R.id.action_add_to_playlist -> {
                         if (selectedItems.isNotEmpty()) {
-                            mainActivity.addToPlaylistDialog(selectedItems.toList())
+                            val selected = selectedItems.toList()
+                            mainActivity.addToPlaylistDialog(selected) {
+                                finishSelectionMode()
+                            }
+                        }
+                        true
+                    }
+                    R.id.action_remove_from_playlist -> {
+                        if (selectedItems.isNotEmpty() && playlistId != null) {
+                            val selected = selectedItems.toList()
+                            CoroutineScope(Dispatchers.Default).launch {
+                                ItemManipulator.removeFromPlaylist(mainActivity, playlistId, selected)
+                                withContext(Dispatchers.Main) {
+                                    finishSelectionMode()
+                                }
+                            }
+                        }
+                        true
+                    }
+                    R.id.action_add_to_queue -> {
+                        if (selectedItems.isNotEmpty()) {
+                            val mediaController = mainActivity.getPlayer()
+                            selectedItems.forEach {
+                                mediaController?.addMediaItem(it)
+                            }
+                            Toast.makeText(context, R.string.add_to_queue, Toast.LENGTH_SHORT).show()
                             finishSelectionMode()
+                        }
+                        true
+                    }
+                    R.id.action_play_next -> {
+                        if (selectedItems.isNotEmpty()) {
+                            val mediaController = mainActivity.getPlayer()
+                            val nextIdx = (mediaController?.currentMediaItemIndex ?: 0) + 1
+                            selectedItems.forEachIndexed { i, item ->
+                                mediaController?.addMediaItem(nextIdx + i, item)
+                            }
+                            Toast.makeText(context, R.string.play_next, Toast.LENGTH_SHORT).show()
+                            finishSelectionMode()
+                        }
+                        true
+                    }
+                    R.id.action_delete -> {
+                        if (selectedItems.isNotEmpty()) {
+                            val selected = selectedItems.toList()
+                            val pairs = selected.mapNotNull {
+                                val file = it.getFile()
+                                val id = it.requireMediaStoreId()
+                                if (file != null) file to id else null
+                            }
+                            if (pairs.isNotEmpty()) {
+                                MaterialAlertDialogBuilder(context)
+                                    .setTitle(R.string.delete)
+                                    .setMessage(context.getString(R.string.delete_selected_really, selected.size))
+                                    .setPositiveButton(R.string.delete) { _, _ ->
+                                        CoroutineScope(Dispatchers.Default).launch {
+                                            val res = ItemManipulator.deleteSongs(mainActivity, pairs)
+                                            withContext(Dispatchers.Main) {
+                                                res?.invoke()
+                                                finishSelectionMode()
+                                            }
+                                        }
+                                    }
+                                    .setNegativeButton(android.R.string.cancel, null)
+                                    .show()
+                            }
                         }
                         true
                     }
@@ -266,7 +333,7 @@ class SongAdapter(
                         getSongList().let {
                             selectedItems.clear()
                             selectedItems.addAll(it)
-                            notifyDataSetChanged()
+                            notifyItemRangeChanged(0, itemCount, "selection_change")
                             mode.title = context.getString(R.string.selected_count, selectedItems.size)
                         }
                         true
@@ -279,7 +346,7 @@ class SongAdapter(
                 selectionMode = false
                 selectedItems.clear()
                 actionMode = null
-                notifyDataSetChanged()
+                notifyItemRangeChanged(0, itemCount, "selection_change")
             }
         })
     }
@@ -289,7 +356,7 @@ class SongAdapter(
         actionMode = null
         selectionMode = false
         selectedItems.clear()
-        notifyDataSetChanged()
+        notifyItemRangeChanged(0, itemCount, "selection_change")
     }
 
     override fun onLongClick(item: MediaItem, position: Int): Boolean {
@@ -332,6 +399,9 @@ class SongAdapter(
 
     override fun onMenu(item: MediaItem, popupMenu: PopupMenu) {
         popupMenu.inflate(R.menu.more_menu)
+        if (isSubFragment == R.id.playlist && playlistId != null) {
+            popupMenu.menu.findItem(R.id.remove_from_playlist)?.isVisible = true
+        }
 
         popupMenu.setOnMenuItemClickListener { it1 ->
             when (it1.itemId) {
@@ -430,6 +500,15 @@ class SongAdapter(
                     true
                 }
 
+                R.id.remove_from_playlist -> {
+                    if (playlistId != null) {
+                        CoroutineScope(Dispatchers.Default).launch {
+                            ItemManipulator.removeFromPlaylist(mainActivity, playlistId, listOf(item))
+                        }
+                    }
+                    true
+                }
+
                 R.id.select -> {
                     startSelectionMode(item)
                     true
@@ -441,7 +520,22 @@ class SongAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: MutableList<Any>) {
+        val isSelected = selectionMode && position < getSongList().size && selectedItems.contains(getSongList()[position])
+        if (isSelected) {
+            holder.itemView.setBackgroundColor(
+                com.google.android.material.color.MaterialColors.getColor(
+                    holder.itemView,
+                    com.google.android.material.R.attr.colorSecondaryContainer
+                )
+            )
+        } else {
+            holder.itemView.background = null
+        }
+
         if (payloads.isNotEmpty()) {
+            if (payloads.contains("selection_change")) {
+                return
+            }
             if (payloads.none { it is Boolean && it }) {
                 holder.nowPlaying.drawable?.level = if (currentIsPlaying == true) 1 else 0
                 return
@@ -456,18 +550,8 @@ class SongAdapter(
             }
         } else {
             super.onBindViewHolder(holder, position, payloads)
-            if (selectionMode && position < getSongList().size && selectedItems.contains(getSongList()[position])) {
-            holder.itemView.setBackgroundColor(
-                com.google.android.material.color.MaterialColors.getColor(
-                    holder.itemView,
-                    com.google.android.material.R.attr.colorSecondaryContainer
-                )
-            )
-        } else {
-            holder.itemView.background = null
-        }
-        if (currentMediaItem == null || getSongList()[position].mediaId != currentMediaItem)
-            return
+            if (currentMediaItem == null || getSongList()[position].mediaId != currentMediaItem)
+                return
         }
         holder.nowPlaying.setImageDrawable(
             NowPlayingDrawable(context)

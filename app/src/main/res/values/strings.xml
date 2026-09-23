@@ -1271,6 +1271,8 @@ supporting local search. This string is displayed in the search bar when using G
     <string name="selected_count">%1$d selected</string>
     <string name="select_all">Select all</string>
     <string name="select">Select</string>
+    <string name="remove_from_playlist">Remove from playlist</string>
+    <string name="delete_selected_really">Do you really want to delete %1$d selected songs? This action cannot be undone.</string>
     <!-- Shown in system's file upload dialog, used by browsers or similar, to allow user to choose
      a playlist using the familiar Gramophone user interface. App icon is next to it -->
     <string name="playlist_picker_activity">Choose playlist</string>

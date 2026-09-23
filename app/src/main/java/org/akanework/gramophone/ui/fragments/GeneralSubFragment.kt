@@ -177,7 +177,8 @@ class GeneralSubFragment : BaseFragment(true) {
                 sharedTitle,
                 itemList,
                 rawOrderExposed = rawOrderExposed,
-                isSubFragment = itemType
+                isSubFragment = itemType,
+                playlistId = if (itemType == R.id.playlist) id else null
             )
 
         recyclerView.enableEdgeToEdgePaddingListener()

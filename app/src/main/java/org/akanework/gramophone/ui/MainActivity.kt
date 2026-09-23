@@ -135,7 +135,7 @@ class MainActivity : BaseActivity() {
     lateinit var playerBottomSheet: PlayerBottomSheet
         private set
     private lateinit var intentSenderDelete: ActivityResultLauncher<IntentSenderRequest>
-    private lateinit var addToPlaylistIntentSender: ActivityResultLauncher<IntentSenderRequest>
+    lateinit var addToPlaylistIntentSender: ActivityResultLauncher<IntentSenderRequest>
     private lateinit var markIsFavoriteStatusIntentSender: ActivityResultLauncher<IntentSenderRequest>
     private var pendingPlaylistRequest: Bundle? = null
     private var pendingDeleteRequest: Bundle? = null
@@ -261,12 +261,12 @@ class MainActivity : BaseActivity() {
     }
 
     @OptIn(FlowPreview::class, InternalCoroutinesApi::class)
-    fun addToPlaylistDialog(item: MediaItem) {
-        addToPlaylistDialog(listOf(item))
+    fun addToPlaylistDialog(item: MediaItem, onComplete: (() -> Unit)? = null) {
+        addToPlaylistDialog(listOf(item), onComplete)
     }
 
     @OptIn(FlowPreview::class, InternalCoroutinesApi::class)
-    fun addToPlaylistDialog(items: List<MediaItem>) {
+    fun addToPlaylistDialog(items: List<MediaItem>, onComplete: (() -> Unit)? = null) {
         val songs = items.mapNotNull { Entry.ofMediaItem(it) }
         if (songs.isEmpty()) {
             Toast.makeText(
@@ -320,6 +320,7 @@ class MainActivity : BaseActivity() {
                                 R.string.create_playlist, "",
                                 { ItemManipulator.getDefaultPlaylistFile(it) }) { name ->
                                 addToPlaylist(null, name, songs)
+                                onComplete?.invoke()
                             }
                             return@setItems
                         }
@@ -330,6 +331,7 @@ class MainActivity : BaseActivity() {
                                 pl.id!!
                             ), null, songs
                         )
+                        onComplete?.invoke()
                     }
                     .setNegativeButton(android.R.string.cancel) { _, _ -> }
                     .show()

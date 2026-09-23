@@ -55,6 +55,39 @@ object ItemManipulator {
     const val FAVORITES = "gramophone_favourite"
     const val DEFAULT_FORMAT = "m3u"
 
+    suspend fun removeFromPlaylist(context: MainActivity, playlistId: Long, items: List<androidx.media3.common.MediaItem>) {
+        val songsToRemove = items.mapNotNull { PlaylistSerializer.Entry.ofMediaItem(it) }
+        if (songsToRemove.isEmpty()) return
+
+        val faves = context.gramophoneApplication.reader.playlistListFlow.map { it.find { p -> p is Favorite } }.first()
+        if (faves?.id == playlistId) {
+            context.markIsFavoriteStatus(songsToRemove, false)
+            return
+        }
+        val uri = ContentUris.withAppendedId(
+            @Suppress("deprecation") MediaStore.Audio.Playlists.EXTERNAL_CONTENT_URI,
+            playlistId
+        )
+        val token = MediaStoreCompat.needRequestBytesWrite(context, uri)
+        if (token != null) {
+            val pendingIntent = MediaStoreCompat.createWriteRequest(context, listOf(token))
+            context.addToPlaylistIntentSender.launch(
+                androidx.activity.result.IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+            )
+            return
+        }
+        try {
+            val urisToRemove = items.mapNotNull { it.getFile()?.toUriCompat() }.toSet()
+            val readback = readbackPlaylist(context, uri)
+            val newSongs = readback.copy(entries = readback.entries.filter { entry ->
+                !entry.locations.any { urisToRemove.contains(it) }
+            })
+            setPlaylistContent(context, uri, newSongs, false)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove songs from playlist $playlistId", e)
+        }
+    }
+
     suspend fun deleteSongs(context: MainActivity, list: List<Pair<File, Long>>): (() -> Unit)? {
         val faves = context.gramophoneApplication.reader.playlistListFlow.map { it.find { p ->
             p is Favorite } }.first()
