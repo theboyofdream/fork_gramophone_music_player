@@ -48,6 +48,8 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
@@ -276,10 +278,40 @@ class FullBottomSheet
     private val progressDrawable: SquigglyProgress
     private var pqs: PlaylistQueueSheet? = null
 
+    private val prevCoverView: ImageView by lazy {
+        ImageView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(R.drawable.ic_default_cover)
+        }
+    }
+
+    private val nextCoverView: ImageView by lazy {
+        ImageView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(R.drawable.ic_default_cover)
+        }
+    }
+
     init {
         inflate(context, R.layout.full_player, this)
         bottomSheetFullCoverFrame = findViewById(R.id.album_cover_frame)
         bottomSheetFullCover = findViewById(R.id.full_sheet_cover)
+        bottomSheetFullCoverFrame.addView(prevCoverView, 0)
+        bottomSheetFullCoverFrame.addView(nextCoverView, 0)
+        bottomSheetFullCoverFrame.clipChildren = true
+        bottomSheetFullCoverFrame.clipToPadding = true
+
+        bottomSheetFullCoverFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            resetCarouselPositions()
+        }
         bottomSheetFullTitle = findViewById(R.id.full_song_name)
         bottomSheetFullSubtitle = findViewById(R.id.full_song_artist)
         bottomSheetFullPreviousButton = findViewById(R.id.sheet_previous_song)
@@ -361,7 +393,7 @@ class FullBottomSheet
         val swipeThreshold = 100f
 
         @SuppressLint("ClickableViewAccessibility")
-        bottomSheetFullCoverFrame.setOnTouchListener { view, event ->
+        bottomSheetFullCoverFrame.setOnTouchListener { _, event ->
             if (velocityTracker == null) {
                 velocityTracker = VelocityTracker.obtain()
             }
@@ -380,12 +412,13 @@ class FullBottomSheet
                     val deltaY = event.rawY - coverStartY
                     if (!isCoverDragging && abs(deltaX) > 20f && abs(deltaX) > abs(deltaY)) {
                         isCoverDragging = true
-                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                        bottomSheetFullCoverFrame.parent?.requestDisallowInterceptTouchEvent(true)
                     }
                     if (isCoverDragging) {
-                        view.translationX = deltaX
-                        val progress = abs(deltaX) / (view.width.toFloat().coerceAtLeast(1f))
-                        view.alpha = (1f - progress * 0.4f).coerceIn(0.3f, 1f)
+                        val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
+                        prevCoverView.translationX = -width + deltaX
+                        bottomSheetFullCover.translationX = deltaX
+                        nextCoverView.translationX = width + deltaX
                     }
                     true
                 }
@@ -395,67 +428,40 @@ class FullBottomSheet
                     val velocityX = velocityTracker?.xVelocity ?: 0f
                     val deltaX = event.rawX - coverStartX
                     val deltaY = event.rawY - coverStartY
+                    val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
 
                     if (isCoverDragging) {
-                        val isSwipeLeft = deltaX < -swipeThreshold || velocityX < -700f
-                        val isSwipeRight = deltaX > swipeThreshold || velocityX > 700f
+                        val isSwipeLeft = (deltaX < -swipeThreshold || velocityX < -700f) && nextCoverView.visibility == VISIBLE
+                        val isSwipeRight = (deltaX > swipeThreshold || velocityX > 700f) && prevCoverView.visibility == VISIBLE
 
                         if (isSwipeLeft) {
-                            val targetX = -view.width.toFloat()
-                            view.animate()
-                                .translationX(targetX)
-                                .alpha(0f)
-                                .setDuration(160)
-                                .withEndAction {
-                                    ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                                    instance?.seekToNext()
-                                    view.translationX = view.width.toFloat()
-                                    view.animate()
-                                        .translationX(0f)
-                                        .alpha(1f)
-                                        .setDuration(180)
-                                        .start()
-                                }
-                                .start()
+                            prevCoverView.animate().translationX(-2f * width).setDuration(180).start()
+                            bottomSheetFullCover.animate().translationX(-width).setDuration(180).start()
+                            nextCoverView.animate().translationX(0f).setDuration(180).withEndAction {
+                                ViewCompat.performHapticFeedback(bottomSheetFullCoverFrame, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                                instance?.seekToNext()
+                                resetCarouselPositions()
+                            }.start()
                         } else if (isSwipeRight) {
-                            val targetX = view.width.toFloat()
-                            view.animate()
-                                .translationX(targetX)
-                                .alpha(0f)
-                                .setDuration(160)
-                                .withEndAction {
-                                    ViewCompat.performHapticFeedback(view, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                                    instance?.seekToPrevious()
-                                    view.translationX = -view.width.toFloat()
-                                    view.animate()
-                                        .translationX(0f)
-                                        .alpha(1f)
-                                        .setDuration(180)
-                                        .start()
-                                }
-                                .start()
+                            prevCoverView.animate().translationX(0f).setDuration(180).withEndAction {
+                                ViewCompat.performHapticFeedback(bottomSheetFullCoverFrame, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                                instance?.seekToPrevious()
+                                resetCarouselPositions()
+                            }.start()
+                            bottomSheetFullCover.animate().translationX(width).setDuration(180).start()
+                            nextCoverView.animate().translationX(2f * width).setDuration(180).start()
                         } else {
-                            view.animate()
-                                .translationX(0f)
-                                .alpha(1f)
-                                .setDuration(180)
-                                .start()
+                            prevCoverView.animate().translationX(-width).setDuration(180).start()
+                            bottomSheetFullCover.animate().translationX(0f).setDuration(180).start()
+                            nextCoverView.animate().translationX(width).setDuration(180).start()
                         }
                     } else if (abs(deltaX) < 15f && abs(deltaY) < 15f && event.actionMasked == MotionEvent.ACTION_UP) {
-                        view.animate()
-                            .translationX(0f)
-                            .alpha(1f)
-                            .setDuration(100)
-                            .start()
+                        resetCarouselPositions()
                         activity.startFragment(DetailDialogFragment()) {
                             putString("Id", instance?.currentMediaItem?.mediaId)
                         }
                     } else {
-                        view.animate()
-                            .translationX(0f)
-                            .alpha(1f)
-                            .setDuration(180)
-                            .start()
+                        resetCarouselPositions()
                     }
                     velocityTracker?.recycle()
                     velocityTracker = null
@@ -1530,17 +1536,66 @@ class FullBottomSheet
         waiter.await()
     }
 
+    private fun resetCarouselPositions() {
+        val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
+        prevCoverView.translationX = -width
+        bottomSheetFullCover.translationX = 0f
+        nextCoverView.translationX = width
+
+        prevCoverView.alpha = 1f
+        bottomSheetFullCover.alpha = 1f
+        nextCoverView.alpha = 1f
+    }
+
+    private fun updateCarouselCovers(currentMediaItem: MediaItem?) {
+        val player = instance ?: return
+        val count = player.mediaItemCount
+        if (count == 0) return
+
+        val currentIdx = player.currentMediaItemIndex
+        val prevIdx = if (currentIdx > 0) currentIdx - 1 else if (player.repeatMode == Player.REPEAT_MODE_ALL) count - 1 else -1
+        val nextIdx = if (currentIdx < count - 1) currentIdx + 1 else if (player.repeatMode == Player.REPEAT_MODE_ALL) 0 else -1
+
+        val prevItem = if (prevIdx in 0 until count) player.getMediaItemAt(prevIdx) else null
+        val nextItem = if (nextIdx in 0 until count) player.getMediaItemAt(nextIdx) else null
+
+        bottomSheetFullCover.dispose()
+        bottomSheetFullCover.loadNoPlaceholder(currentMediaItem?.mediaMetadata?.artworkUri) {
+            scale(Scale.FILL)
+            error(R.drawable.ic_default_cover)
+        }
+
+        if (prevItem != null) {
+            prevCoverView.visibility = VISIBLE
+            prevCoverView.dispose()
+            prevCoverView.loadNoPlaceholder(prevItem.mediaMetadata.artworkUri) {
+                scale(Scale.FILL)
+                error(R.drawable.ic_default_cover)
+            }
+        } else {
+            prevCoverView.visibility = GONE
+        }
+
+        if (nextItem != null) {
+            nextCoverView.visibility = VISIBLE
+            nextCoverView.dispose()
+            nextCoverView.loadNoPlaceholder(nextItem.mediaMetadata.artworkUri) {
+                scale(Scale.FILL)
+                error(R.drawable.ic_default_cover)
+            }
+        } else {
+            nextCoverView.visibility = GONE
+        }
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int
     ) {
         if (instance?.mediaItemCount != 0) {
-            bottomSheetFullCover.dispose()
-            bottomSheetFullCover.loadNoPlaceholder(mediaItem?.mediaMetadata?.artworkUri) {
-                scale(Scale.FILL)
-                error(R.drawable.ic_default_cover)
-            }
+            updateCarouselCovers(mediaItem)
+            resetCarouselPositions()
             if (DynamicColors.isDynamicColorAvailable() &&
                 prefs.getBooleanStrict("content_based_color", true)
             ) {
@@ -1557,6 +1612,8 @@ class FullBottomSheet
             updateDuration()
         } else {
             bottomSheetFullCover.dispose()
+            prevCoverView.dispose()
+            nextCoverView.dispose()
         }
     }
 
