@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui.components
 
 import android.annotation.SuppressLint
@@ -21,6 +38,7 @@ import coil3.load
 import coil3.request.crossfade
 import coil3.request.error
 import com.google.android.material.button.MaterialButton
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.akanework.gramophone.R
 import org.akanework.gramophone.logic.dpToPx
 import org.akanework.gramophone.logic.ui.MyRecyclerView
@@ -30,7 +48,8 @@ import org.akanework.gramophone.logic.utils.convertDurationToTimeStamp
 // Like SongAdapter, but without layouts, sorting, or flows; instead supporting drag, swipe & remove
 abstract class EditSongAdapter(
     private val context: Context,
-    private val showDuration: Boolean
+    private val showDuration: Boolean,
+    private val disableDrag: MutableStateFlow<Boolean>? = null,
 ) : MyRecyclerView.Adapter<EditSongAdapter.ViewHolder>() {
     override fun onCreateViewHolder(
         parent: ViewGroup,
@@ -95,17 +114,17 @@ abstract class EditSongAdapter(
     abstract fun onRowMoved(from: Int, to: Int) // must call notifyItemMoved() if actually moving
     abstract fun removeItem(pos: Int) // must call notifyItemRemoved() if actually removing
 
-    inner class PlaylistCardMoveCallback() :
+    inner class PlaylistCardMoveCallback :
         ItemTouchHelper.SimpleCallback(
             ItemTouchHelper.UP or ItemTouchHelper.DOWN,
             ItemTouchHelper.START or ItemTouchHelper.END
         ) {
         override fun isLongPressDragEnabled(): Boolean {
-            return true
+            return disableDrag?.value != true
         }
 
         override fun isItemViewSwipeEnabled(): Boolean {
-            return true
+            return disableDrag?.value != true
         }
 
         override fun onMove(

@@ -18,7 +18,6 @@
 package org.akanework.gramophone.ui.fragments
 
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -33,6 +32,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted.Companion.WhileSubscribed
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.withContext
 import org.akanework.gramophone.R
 import org.akanework.gramophone.logic.enableEdgeToEdgePaddingListener
@@ -160,8 +160,10 @@ class GeneralSubFragment : BaseFragment(true) {
             else -> throw IllegalArgumentException()
         }
 
+        val sharedTitle = title.sharePauseableIn(lifecycleScope + Dispatchers.Default,
+            WhileSubscribed(), replay = 1)
         lifecycleScope.launch(Dispatchers.Default) {
-            title.collect {
+            sharedTitle.collect {
                 withContext(Dispatchers.Main) {
                     // Show title text.
                     collapsingToolbarLayout.title = it
@@ -172,7 +174,7 @@ class GeneralSubFragment : BaseFragment(true) {
         val songAdapter =
             SongAdapter(
                 this,
-                title,
+                sharedTitle,
                 itemList,
                 rawOrderExposed = rawOrderExposed,
                 isSubFragment = itemType

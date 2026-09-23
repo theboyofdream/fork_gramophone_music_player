@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 The Gramophone authors
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui.fragments.settings
 
 import android.content.ActivityNotFoundException
@@ -70,7 +87,7 @@ class ContributorsSettingsActivity : BaseComposeActivity() {
 
     @Composable
     fun SimpleCard(
-        shape: Shape, url: String, icon: @Composable () -> Unit,
+        shape: Shape, url: String?, icon: @Composable () -> Unit,
         name: String?, login: String?, subtitle: String
     ) {
         Card(
@@ -80,11 +97,13 @@ class ContributorsSettingsActivity : BaseComposeActivity() {
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             shape = shape,
             onClick = {
-                val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-                try {
-                    startActivity(intent)
-                } catch (_: ActivityNotFoundException) {
-                    Toast.makeText(this, R.string.no_app_found, Toast.LENGTH_LONG).show()
+                if (url != null) {
+                    val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+                    try {
+                        startActivity(intent)
+                    } catch (_: ActivityNotFoundException) {
+                        Toast.makeText(this, R.string.no_app_found, Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         ) {
@@ -125,7 +144,7 @@ class ContributorsSettingsActivity : BaseComposeActivity() {
     fun ContributorCard(shape: Shape, contributor: GitHubUser) {
         SimpleCard(
             shape,
-            url = "https://github.com/${contributor.login}",
+            url = if (contributor.link) "https://github.com/${contributor.login}" else null,
             icon = {
                 AsyncImage(
                     model = contributor.avatar,

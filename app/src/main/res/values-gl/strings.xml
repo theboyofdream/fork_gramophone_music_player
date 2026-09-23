@@ -340,7 +340,7 @@
     <string name="spk_encoding_iec60958">IEC 60958</string>
     <string name="spk_encoding_dts_uhd">DTS-UHD</string>
     <string name="spk_encoding_dra">DRA</string>
-    <string name="spk_encoding_aptx_adaptive_qlea">aptX Adaptive over LE Audio</string>
+    <string name="spk_encoding_aptx_adaptive_qlea">aptX Adaptive sobre LE Audio</string>
     <string name="spk_encoding_aptx_adaptive_r4">aptX Adaptive R4</string>
     <string name="spk_encoding_dts_hd_ma">DTS-HD Master Audio</string>
     <string name="spk_encoding_aac_main">AAC Main</string>
@@ -350,19 +350,19 @@
     <string name="spk_encoding_aac_erlc">AAC ERLC</string>
     <string name="spk_encoding_aac_ld">AAC-LD</string>
     <string name="spk_encoding_aac_adts_main">AAC Main in ADTS</string>
-    <string name="spk_encoding_aac_adts_lc">AAC-LC in ADTS</string>
-    <string name="spk_encoding_aac_adts_ssr">AAC-SSR in ADTS</string>
-    <string name="spk_encoding_aac_adts_ltp">AAC-LTP in ADTS</string>
-    <string name="spk_encoding_aac_adts_he_v1">HE-AAC v1 in ADTS</string>
-    <string name="spk_encoding_aac_adts_he_v2">HE-AAC v2 in ADTS</string>
-    <string name="spk_encoding_aac_adts_xhe">xHE-AAC in ADTS</string>
-    <string name="spk_encoding_aac_adts_ld">AAC-LD in ADTS</string>
-    <string name="spk_encoding_aac_adts_scalable">AAC Scalable in ADTS</string>
-    <string name="spk_encoding_aac_adts_erlc">AAC-ERLC in ADTS</string>
-    <string name="spk_encoding_aac_adts_eld">AAC-ELD in ADTS</string>
-    <string name="spk_encoding_aac_latm_lc">AAC-LC in LATM</string>
-    <string name="spk_encoding_aac_latm_he_v1">HE-AAC v1 in LATM</string>
-    <string name="spk_encoding_aac_latm_he_v2">HE-AAC v2 in LATM</string>
+    <string name="spk_encoding_aac_adts_lc">AAC-LC en ADTS</string>
+    <string name="spk_encoding_aac_adts_ssr">AAC-SSR en ADTS</string>
+    <string name="spk_encoding_aac_adts_ltp">AAC-LTP en ADTS</string>
+    <string name="spk_encoding_aac_adts_he_v1">HE-AAC v1 en ADTS</string>
+    <string name="spk_encoding_aac_adts_he_v2">HE-AAC v2 en ADTS</string>
+    <string name="spk_encoding_aac_adts_xhe">xHE-AAC en ADTS</string>
+    <string name="spk_encoding_aac_adts_ld">AAC-LD en ADTS</string>
+    <string name="spk_encoding_aac_adts_scalable">AAC Scalable en ADTS</string>
+    <string name="spk_encoding_aac_adts_erlc">AAC-ERLC en ADTS</string>
+    <string name="spk_encoding_aac_adts_eld">AAC-ELD en ADTS</string>
+    <string name="spk_encoding_aac_latm_lc">AAC-LC en LATM</string>
+    <string name="spk_encoding_aac_latm_he_v1">HE-AAC v1 en LATM</string>
+    <string name="spk_encoding_aac_latm_he_v2">HE-AAC v2 en LATM</string>
     <string name="spk_encoding_mat_1_0">Dolby MAT 1.0</string>
     <string name="spk_encoding_mat_2_0">Dolby MAT 2.0</string>
     <string name="spk_encoding_mat_2_1">Dolby MAT 2.1</string>
@@ -372,7 +372,7 @@
     <string name="spk_encoding_mpegh_sub_lc_l4">MPEG-H Low Complexity L4</string>
     <string name="spk_encoding_unknown">Unknown format %s</string>
     <string name="spk_encoding_unknown_d">Formato descoñecido %d</string>
-    <string name="send_email_manually">Envíame o informe a nift4dev@gmail.com - non atopo a app de correo</string>
+    <string name="send_email_manually">Envíame o informe a nift4@posteo.net - non atopo a app de correo</string>
     <string name="email_clipboard">Copiáronse o enderezo de correo e texto ao portapapeis</string>
     <string name="settings_export_logs">Exportar rexistro da app</string>
     <string name="crash_report">Informe do fallo</string>
@@ -431,7 +431,7 @@
     </plurals>
     <string name="settings_cookie_summary">Mostrar a portada do álbum con forma de galleta</string>
     <string name="settings_cookie_info">Portada como galleta</string>
-    <string name="settings_pure_dark">Decorado escuro puro</string>
+    <string name="settings_pure_dark">Negro puro en decorado escuro</string>
     <string name="settings_pure_dark_summary">Un decorado onde todas as partes da app son de negro puro (pode estragar o negro en pantallas OLED)</string>
     <string name="settings_stop_on_dismiss">Deter ao desbotar</string>
     <string name="settings_stop_on_dismiss_summary">Detén a reprodución cando a tarefa da app se desbota das recentes</string>
@@ -463,7 +463,7 @@
     <string name="settings_replaygain_no_rg_amp_desc">Reducir o volume para cancións que soan moi alto e que non teñen etiquetas ReplayGain</string>
     <string name="settings_replaygain_preamp_desc">Aumentar ou diminuír o volume das cancións con etiquetas ReplayGain. Os valores máis altos poderían causar perdas no rango dináminco para evitar solapamentos.</string>
     <string name="settings_replaygain_mode_desc">«Intelixente» conserva automáticamente a dinámica do álbum so cando se reproducen cancións de xeito consecutivo dun álbum.</string>
-    <string name="sort_by_artist_year"><![CDATA[Artist -> ano]]></string>
+    <string name="sort_by_artist_year"><![CDATA[Artist -&gt; ano]]></string>
     <string name="clear_queue">Limpar cola</string>
     <string name="contributors_saladnoober">Control da calidade</string>
     <string name="actions_query_shuffle_all_songs">barallar todas as cancións</string>
@@ -517,4 +517,14 @@
     <string name="settings_mq_enabled">Varias colas</string>
     <string name="mq_unpin_queue">Non fixar a cola</string>
     <string name="mq_pin_queue">Fixar a cola</string>
+    <string name="shuffled">%s (barallado)</string>
+    <string name="loading_playlists">Cargando as listas…</string>
+    <string name="contributors_banksio">Android Auto</string>
+    <string name="unfavorite">Retirar favorita</string>
+    <string name="edit_mode">Entrar no modo edición</string>
+    <string name="reverse_order">Orde inversa</string>
+    <string name="settings_notification_lyrics_title">Notificación sobre as letras</string>
+    <string name="settings_notification_lyrics_summary">Mostra as letras como título da notificación e artista - título como subtítulo</string>
+    <string name="settings_always_skip_previous">Volver sempre á canción anterior</string>
+    <string name="settings_always_skip_previous_summary">Cambia directamente á canción anterior cando se preme o botón anterior no lugar de volver ao inicio da canción</string>
 </resources>

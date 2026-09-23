@@ -20,10 +20,12 @@ package org.akanework.gramophone.logic
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ContentResolver
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.database.Cursor
 import android.graphics.Color
 import android.graphics.drawable.AnimatedVectorDrawable
 import android.graphics.drawable.Drawable
@@ -31,10 +33,12 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.StrictMode
+import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup.MarginLayoutParams
 import android.view.ViewPropertyAnimator
@@ -50,7 +54,6 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
-import androidx.core.net.toFile
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -64,7 +67,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.Log
-import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat
@@ -81,9 +83,11 @@ import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVIC
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_GET_QUEUE_FOR_UI
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_LOAD_QUEUE
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_PIN_QUEUE
+import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_RENAME_QUEUE
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_REORDER
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QB_UNPIN_QUEUE
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_QUERY_TIMER
+import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_SET_MEDIA_ITEMS_ATOMIC
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY
 import org.akanework.gramophone.logic.GramophonePlaybackService.Companion.SERVICE_SET_TIMER
 import org.akanework.gramophone.logic.utils.AfFormatInfo
@@ -91,6 +95,7 @@ import org.akanework.gramophone.logic.utils.AudioFormatDetector
 import org.akanework.gramophone.logic.utils.AudioTrackInfo
 import org.akanework.gramophone.logic.utils.BtCodecInfo
 import org.akanework.gramophone.logic.utils.CalculationUtils
+import org.akanework.gramophone.logic.utils.Flags
 import org.akanework.gramophone.logic.utils.MediaItemList
 import org.akanework.gramophone.logic.utils.ReplayGainUtil
 import org.akanework.gramophone.logic.utils.SemanticLyrics
@@ -98,8 +103,8 @@ import org.akanework.gramophone.ui.MainActivity
 import org.jetbrains.annotations.Contract
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserException
+import uk.akane.libphonograph.items.EXTRA_FILE
 import java.io.File
-import java.io.FileInputStream
 import java.util.Locale
 import kotlin.math.max
 
@@ -114,12 +119,8 @@ fun Player.playOrPause() {
     }
 }
 
-fun MediaItem.getUri(): Uri? {
-    return localConfiguration?.uri
-}
-
 fun MediaItem.getFile(): File? {
-    return getUri()?.toFile()
+    return mediaMetadata.extras?.getString(EXTRA_FILE)?.let { File(it) }
 }
 
 fun String.toMediaStoreId(): Long? {
@@ -133,23 +134,17 @@ fun MediaItem.requireMediaStoreId(): Long {
         ?: throw IllegalArgumentException("Media item with ID $mediaId doesn't appear to be media store item")
 }
 
-fun MediaItem.getBitrate(): Int? {
+fun MediaItem.getBitrate(context: Context): Int? {
     val retriever = MediaMetadataRetriever()
-    val file = getFile() ?: return null
-    var fd: FileInputStream? = null
+    val uri = localConfiguration?.uri ?: return null
     return try {
-        fd = file.inputStream()
-        // uses this slightly less straight-forward overload to avoid a resource leak in platform
-        retriever.setDataSource(fd.fd)
-        fd.close()
-        fd = null
+        retriever.setDataSource(context, uri)
         retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
             ?.toIntOrNull()
     } catch (e: Exception) {
         Log.w("MediaItem", "getBitrate failed", e)
         null
     } finally {
-        fd?.close()
         retriever.release()
     }
 }
@@ -318,6 +313,21 @@ fun MediaController.setMediaItemsSeamlessly(items: List<MediaItem>, position: In
     )
 }
 
+fun MediaController.setMediaItemsWithTitle(items: List<MediaItem>, position: Int = C.INDEX_UNSET, title: String,
+                                        shuffleEnabled: Boolean? = null, repeatMode: @Player.RepeatMode Int? = null) {
+    sendCustomCommand(
+        SessionCommand(SERVICE_SET_MEDIA_ITEMS_ATOMIC, Bundle.EMPTY).apply {
+            customExtras.putBinder("items", MediaItemList(items))
+            customExtras.putInt("position", position)
+            customExtras.putString("title", title)
+            if (shuffleEnabled != null)
+                customExtras.putBoolean("shuffleEnabled", shuffleEnabled)
+            if (repeatMode != null)
+                customExtras.putInt("repeatMode", repeatMode)
+        }, Bundle.EMPTY
+    )
+}
+
 inline fun <reified T> MutableList<T>.forEachSupport(skipFirst: Int = 0, operator: (T) -> Unit) {
     val li = listIterator()
     var skip = skipFirst
@@ -372,6 +382,7 @@ fun MediaController.getAudioFormat(): AudioFormatDetector.AudioFormats =
         )
     }
 
+// TODO we do not really need binder for this anymore
 fun MediaController.getInactiveQueues(): List<MultiQueueObject> =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_GET_INACTIVE_LIST, Bundle.EMPTY),
@@ -381,23 +392,26 @@ fun MediaController.getInactiveQueues(): List<MultiQueueObject> =
         MultiQueueList.getList(binder)
     }
 
-fun MediaController.getQueue(index: Int = C.INDEX_UNSET): MultiQueueObject? =
+// TODO: call without media list
+fun MediaController.getInactiveQueue(queueId: Long): MultiQueueObject? =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_GET_QUEUE_FOR_UI, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
         }, Bundle.EMPTY
     ).get().extras.run {
         val binder = getBinder("allQueues")!!
         MultiQueueList.getList(binder).firstOrNull()
     }
 
-fun MediaController.getQueueForUi(index: Int = -1): Pair<MutableList<Int>, MultiQueueObject>? {
-    if (index == -1) {
-        return null
-    }
+/**
+ * Get full [MultiQueueObject] object with media items and shuffle order.
+ *
+ * @param queueId Inactive queue id, or specify -1 to retrieve the active queue.
+ */
+fun MediaController.getQueueForUi(queueId: Long = -1L): Pair<MutableList<Int>, MultiQueueObject>? {
     return sendCustomCommand(
         SessionCommand(SERVICE_QB_GET_QUEUE_FOR_UI, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
         }, Bundle.EMPTY
     ).get().extras.run {
         val binder = getBinder("allQueues")!!
@@ -413,55 +427,52 @@ fun MediaController.getQueueForUi(index: Int = -1): Pair<MutableList<Int>, Multi
     }
 }
 
-fun MediaController.loadQueue(index: Int, startIndex: Int = C.INDEX_UNSET) {
+fun MediaController.loadQueue(queueId: Long, startIndex: Int = C.INDEX_UNSET) {
     sendCustomCommand(
         SessionCommand(SERVICE_QB_LOAD_QUEUE, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
             customExtras.putInt("startIndex", startIndex)
         }, Bundle.EMPTY
     )
 }
 
-fun MediaController.pinQueue(index: Int): Boolean =
+fun MediaController.pinQueue(queueId: Long) =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_PIN_QUEUE, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
         }, Bundle.EMPTY
-    ).get().extras.run {
-        if (containsKey("status"))
-            getBoolean("status")
-        else throw IllegalArgumentException("expected status to be set")
-    }
+    )
 
 
-fun MediaController.unpinQueue(index: Int): Long =
+fun MediaController.unpinQueue(queueId: Long) =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_UNPIN_QUEUE, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
         }, Bundle.EMPTY
-    ).get().extras.run {
-        if (containsKey("expiry"))
-            getLong("expiry")
-        else throw IllegalArgumentException("expected expiry to be set")
-    }
+    )
 
 
-fun MediaController.deleteQueue(index: Int): Boolean =
+fun MediaController.deleteQueue(queueId: Long) =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_DEL, Bundle.EMPTY).apply {
-            customExtras.putInt("index", index)
+            customExtras.putLong("queueId", queueId)
         }, Bundle.EMPTY
-    ).get().extras.run {
-        if (containsKey("status"))
-            getBoolean("status")
-        else throw IllegalArgumentException("expected status to be set")
-    }
+    )
 
-fun MediaController.reorderQueue(from: Int, to: Int): Boolean =
+fun MediaController.reorderQueue(from: Int, to: Int) =
     sendCustomCommand(
         SessionCommand(SERVICE_QB_REORDER, Bundle.EMPTY).apply {
             customExtras.putInt("from", from)
             customExtras.putInt("to", to)
+        }, Bundle.EMPTY
+    )
+
+fun MediaController.renameQueue(queueId: Long, title: String, dryRun: Boolean): Boolean =
+    sendCustomCommand(
+        SessionCommand(SERVICE_QB_RENAME_QUEUE, Bundle.EMPTY).apply {
+            customExtras.putLong("queueId", queueId)
+            customExtras.putString("title", title)
+            customExtras.putBoolean("dryRun", dryRun)
         }, Bundle.EMPTY
     ).get().extras.run {
         if (containsKey("status"))
@@ -489,9 +500,7 @@ fun Tracks.getFirstSelectedTrackFormatByType(type: @C.TrackType Int): Format? {
 // https://twitter.com/Piwai/status/1529510076196630528
 fun Handler.postAtFrontOfQueueAsync(callback: Runnable) {
     sendMessageAtFrontOfQueue(Message.obtain(this, callback).apply {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            isAsynchronous = true
-        }
+        isAsynchronous = true
     })
 }
 
@@ -612,32 +621,9 @@ fun ComponentActivity.enableEdgeToEdgeProperly() {
     }
 }
 
-@SuppressLint("DiscouragedPrivateApi")
-private fun WindowInsets.unconsumeIfNeeded() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-        // Api21Impl of getRootWindowInsets returns already-consumed WindowInsets with correct data
-        // Said consumed insets cannot be dispatched again because well, they are already consumed
-        // Workaround this using some reflection (Api23Impl+ are not affected so this is safe)
-        val mSystemWindowInsetsConsumed = WindowInsets::class.java
-            .getDeclaredField("mSystemWindowInsetsConsumed")
-            .apply { isAccessible = true }
-        val mWindowDecorInsetsConsumed = WindowInsets::class.java
-            .getDeclaredField("mWindowDecorInsetsConsumed")
-            .apply { isAccessible = true }
-        val mStableInsetsConsumed = WindowInsets::class.java
-            .getDeclaredField("mStableInsetsConsumed")
-            .apply { isAccessible = true }
-        mSystemWindowInsetsConsumed.set(this, false)
-        mWindowDecorInsetsConsumed.set(this, false)
-        mStableInsetsConsumed.set(this, false)
-    }
-}
-
 // Pitfall: WindowInsetsCompat.Builder(insets) mutates the platform insets
 fun WindowInsetsCompat.clone(): WindowInsetsCompat =
-    WindowInsetsCompat.toWindowInsetsCompat(WindowInsets(toWindowInsets()).also {
-        it.unconsumeIfNeeded()
-    })
+    WindowInsetsCompat.toWindowInsetsCompat(WindowInsets(toWindowInsets()))
 
 fun Context.supportsWideScreen() : Boolean {
     val config = resources.configuration
@@ -785,15 +771,77 @@ operator fun PaddingValues.plus(other: PaddingValues): PaddingValues = PaddingVa
     bottom = this.calculateBottomPadding() + other.calculateBottomPadding(),
 )
 
+/**
+ * Assign a title to a queue by embedding it into the first media item's mediaId. For use where
+ * Media Session commands are unavailable. Use SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY where possible.
+ * If no title is given, no changes are made..
+ */
 fun queueWithTitle(mediaItems: List<MediaItem>, mqTitle: String?): List<MediaItem> {
-    if (mediaItems.isEmpty() || mqTitle == null) return mediaItems
+    if (!Flags.MQ_PREVIEW || mediaItems.isEmpty() || mqTitle == null) return mediaItems
     val firstMediaItem = mediaItems.first()
-    val newFirstMediaItem = firstMediaItem.buildUpon().setMediaMetadata(
-        firstMediaItem.mediaMetadata.buildUpon().setExtras(
-            (firstMediaItem.mediaMetadata.extras?.let { Bundle(it) } ?: Bundle()).apply {
-                putString("mq_title", mqTitle)
-            }
-        ).build()
-    ).build()
+//    if (firstMediaItem.mediaId.startsWith("mq_title")) {
+//        Log.d("queueWithTitle", "we have a title already, id: ${firstMediaItem.mediaId}")
+//    }
+    val newFirstMediaItem = firstMediaItem.buildUpon()
+        .setMediaId("mq_title:$mqTitle:"+firstMediaItem.mediaId)
+        .build()
     return listOf(newFirstMediaItem) + mediaItems.drop(1)
+}
+
+/**
+ * Parse the queue title and the media id from a media item.
+ */
+fun parseQueueTitle(mediaItem: MediaItem): Pair<String, String?> {
+    return if (mediaItem.mediaId.startsWith("mq_title")) {
+        var title = mediaItem.mediaId.substringAfter("mq_title:")
+        val mediaId = title.substringAfter(":")
+        title = title.substringBefore(":")
+        Pair(mediaId, title)
+    } else {
+        Pair(mediaItem.mediaId, null)
+    }
+}
+
+fun ContentResolver.queryWithPending(uri: Uri, projection: Array<String>, selection: String?,
+                                     selectionArgs: Array<String>?, sortOrder: String?,
+                                     limit: Int? = null, offset: Int? = null,
+                                     cancellationSignal: CancellationSignal? = null): Cursor? {
+    return if (hasScopedStorageV1()) {
+        query(if (hasImprovedMediaStore()) uri else @Suppress("deprecation")
+        MediaStore.setIncludePending(uri), projection, Bundle().apply {
+            if (selection != null)
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+            if (selectionArgs != null)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+            if (sortOrder != null)
+                putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+            if (limit != null)
+                putInt(ContentResolver.QUERY_ARG_LIMIT, limit)
+            if (offset != null)
+                putInt(ContentResolver.QUERY_ARG_OFFSET, offset)
+            if (hasImprovedMediaStore())
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+        }, cancellationSignal)
+    } else {
+        val sortOrder = when {
+            limit != null && sortOrder != null && offset == null -> "$sortOrder LIMIT $limit"
+            limit != null && sortOrder != null -> "$sortOrder LIMIT $limit OFFSET $offset"
+            offset != null && sortOrder != null -> "$sortOrder OFFSET $offset"
+            offset != null -> "OFFSET $offset"
+            limit != null -> "LIMIT $limit"
+            else -> sortOrder
+        }
+        query(uri, projection, selection, selectionArgs, sortOrder, cancellationSignal)
+    }
+}
+
+@SuppressLint("PrivateApi")
+fun getSystemProperty(key: String): String? {
+    return try {
+        val clz = Class.forName("android.os.SystemProperties")
+        val get = clz.getMethod("get", String::class.java)
+        get.invoke(null, key) as String
+    } catch (e: Exception) {
+        null
+    }
 }

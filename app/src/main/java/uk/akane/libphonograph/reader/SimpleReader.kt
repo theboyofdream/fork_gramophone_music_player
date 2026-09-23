@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 The Gramophone authors
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package uk.akane.libphonograph.reader
 
 import android.content.Context
@@ -14,7 +31,6 @@ object SimpleReader {
         whiteListSet: Set<String> = setOf(),
         shouldUseEnhancedCoverReading: Boolean? = false, // null means load if permission is granted
         recentlyAddedFilterSecond: Long? = 1_209_600, // null means don't generate recently added
-        coverStubUri: String? = null
     ): SimpleReaderResult {
         val (playlists, foundPlaylistContent) = Reader.fetchPlaylists(context)
         val result = runBlocking {
@@ -23,7 +39,7 @@ object SimpleReader {
                     context, minSongLengthSeconds, blackListSet, whiteListSet,
                     shouldUseEnhancedCoverReading,
                     shouldLoadIdMap = false,
-                    shouldLoadPathMap = foundPlaylistContent, coverStubUri = coverStubUri
+                    shouldLoadPathMap = foundPlaylistContent
                 )
             }
         }

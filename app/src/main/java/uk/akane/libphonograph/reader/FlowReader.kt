@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package uk.akane.libphonograph.reader
 
 import android.content.ContentResolver
@@ -13,6 +30,7 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -29,6 +47,8 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.akanework.gramophone.logic.emitOrDie
 import org.akanework.gramophone.logic.hasAudioPermission
 import org.akanework.gramophone.logic.utils.flows.Invalidation
@@ -47,6 +67,7 @@ import uk.akane.libphonograph.items.Date
 import uk.akane.libphonograph.items.FileNode
 import uk.akane.libphonograph.items.Genre
 import uk.akane.libphonograph.versioningCallbackFlow
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * SimpleReader reimplementation using flows with focus on efficiency.
@@ -59,7 +80,6 @@ class FlowReader(
     whiteListSetFlow: SharedFlow<Set<String>>,
     shouldUseEnhancedCoverReadingFlow: SharedFlow<Boolean?>, // null means load if permission is granted
     recentlyAddedFilterSecondFlow: SharedFlow<Long?>, // null means don't generate recently added
-    coverStubUri: String? = null
 ) {
     // IMPORTANT: Do not use distinctUntilChanged() or StateFlow here because equals() on thousands
     // of MediaItems is very, very expensive!
@@ -68,7 +88,8 @@ class FlowReader(
         private set
     private val scope = CoroutineScope(Dispatchers.IO + CoroutineName("FlowReader"))
     private val finishRefreshTrigger = MutableSharedFlow<Unit>(replay = 0)
-    private val manualRefreshTrigger = MutableSharedFlow<Unit>(replay = 1)
+    private val manualRefreshTrigger = MutableSharedFlow<Unit>(replay = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     init {
         manualRefreshTrigger.emitOrDie(Unit)
@@ -85,47 +106,56 @@ class FlowReader(
     ) else versioningCallbackFlow { nextVersion ->
         // Android 11 has a bug where Google forgot to add change notifications for playlists, so we
         // must use Files table URIs and manually track stuff.
-        val playlistIds = mutableSetOf<Long>()
+        val lock = Mutex()
         val listener = object : ContentObserverCompat(null) {
+            var playlistIdsCache: MutableSet<Long>? = null
             override fun onChange(selfChange: Boolean, uris: Collection<Uri>, flags: Int) {
-                if ((flags and ContentResolver.NOTIFY_INSERT) != 0) {
-                    val playlistIdsAdded = uris.mapNotNull {
-                        try {
-                            val id = ContentUris.parseId(it) // Ensure id exists
-                            val isPlaylist = context.contentResolver.query(it,
-                                arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE),
-                                null, null, null).use { cursor ->
-                                if (cursor != null && cursor.moveToFirst()) {
-                                    cursor.getInt(cursor.getColumnIndexOrThrow(
-                                        MediaStore.Files.FileColumns.MEDIA_TYPE)) ==
-                                            MediaStoreCompat.MEDIA_TYPE_PLAYLIST
-                                } else false
+                scope.launch {
+                    val playlistIds = maybeLoadPlaylists() ?: return@launch
+                    if ((flags and ContentResolver.NOTIFY_INSERT) != 0) {
+                        val playlistIdsAdded = uris.mapNotNull {
+                            try {
+                                val id = ContentUris.parseId(it) // Ensure id exists
+                                val isPlaylist = context.contentResolver.query(
+                                    it,
+                                    arrayOf(MediaStore.Files.FileColumns.MEDIA_TYPE),
+                                    null, null, null
+                                ).use { cursor ->
+                                    if (cursor != null && cursor.moveToFirst()) {
+                                        cursor.getInt(
+                                            cursor.getColumnIndexOrThrow(
+                                                MediaStore.Files.FileColumns.MEDIA_TYPE
+                                            )
+                                        ) ==
+                                                MediaStoreCompat.MEDIA_TYPE_PLAYLIST
+                                    } else false
+                                }
+                                if (isPlaylist) id else null
+                            } catch (_: NumberFormatException) {
+                                // ignore
+                                null
+                            } catch (e: Exception) {
+                                Log.w("FlowReader", "failed to query new", e)
+                                null
                             }
-                            if (isPlaylist) id else null
-                        } catch (_: NumberFormatException) {
-                            // ignore
-                            null
-                        } catch (e: Exception) {
-                            Log.w("FlowReader", "failed to query new", e)
-                            null
                         }
-                    }
-                    if (playlistIdsAdded.isNotEmpty()) {
-                        playlistIds.addAll(playlistIdsAdded)
-                        scope.launch {
+                        if (playlistIdsAdded.isNotEmpty()) {
+                            lock.withLock {
+                                playlistIds.addAll(playlistIdsAdded)
+                            }
                             send(nextVersion())
                         }
-                    }
-                } else {
-                    val idsChanged = uris.mapNotNull {
-                        try {
-                            ContentUris.parseId(it)
-                        } catch (_: NumberFormatException) {
-                            null
+                    } else {
+                        val idsChanged = uris.mapNotNull {
+                            try {
+                                ContentUris.parseId(it)
+                            } catch (_: NumberFormatException) {
+                                null
+                            }
                         }
-                    }
-                    if (playlistIds.find { i -> idsChanged.contains(i) } != null) {
-                        scope.launch {
+                        if (lock.withLock {
+                            playlistIds.find { i -> idsChanged.contains(i) } != null
+                        }) {
                             send(nextVersion())
                         }
                     }
@@ -135,25 +165,52 @@ class FlowReader(
             override fun deliverSelfNotifications(): Boolean {
                 return true
             }
+
+            suspend fun maybeLoadPlaylists(): MutableSet<Long>? {
+                if (playlistIdsCache != null)
+                    return playlistIdsCache
+                return try {
+                    context.contentResolver.query(MediaStoreCompat.FILES_EXTERNAL_CONTENT_URI,
+                        arrayOf(MediaStore.Files.FileColumns._ID),
+                        "${MediaStore.Files.FileColumns.MEDIA_TYPE} = " +
+                                "${MediaStoreCompat.MEDIA_TYPE_PLAYLIST}",
+                        null, null).use { cursor ->
+                        if (cursor == null)
+                            return null
+                        val tmp = mutableSetOf<Long>()
+                        if (cursor.moveToFirst()) {
+                            do {
+                                tmp.add(cursor.getLong(cursor.getColumnIndexOrThrow(
+                                    MediaStore.Files.FileColumns._ID)))
+                            } while (cursor.moveToNext())
+                        }
+                        lock.withLock {
+                            if (playlistIdsCache != null) // we raced with another thread, no issue tho
+                                return@withLock playlistIdsCache
+                            playlistIdsCache = tmp
+                            return@withLock playlistIdsCache
+                        }
+                    }
+                } catch (e: IllegalArgumentException) {
+                    // MediaStore.getExternalVolumeNames().contains("external_primary") can return
+                    // true but this exception might still be thrown. There's no API returning the
+                    // exact state that MediaProvider uses, so any checking is prone to races. This
+                    // case is one where try-catch works the best.
+                    if (e.message == "Volume external_primary not found")
+                        null
+                    else
+                        throw e
+                }
+            }
         }
         // Notifications may get delayed while we are frozen, but they do not get lost. Though, if
         // too many of them pile up, we will get killed for eating too much space with our async
         // binder transactions and we will have to restart in a new process later.
         context.contentResolver.registerContentObserver(MediaStoreCompat.FILES_EXTERNAL_CONTENT_URI,
             true, listener)
-        context.contentResolver.query(MediaStoreCompat.FILES_EXTERNAL_CONTENT_URI,
-            arrayOf(MediaStore.Files.FileColumns._ID),
-            "${MediaStore.Files.FileColumns.MEDIA_TYPE} = " +
-                    "${MediaStoreCompat.MEDIA_TYPE_PLAYLIST}",
-            null, null).use { cursor ->
-            if (cursor != null && cursor.moveToFirst()) {
-                do {
-                    playlistIds.add(cursor.getLong(cursor.getColumnIndexOrThrow(
-                            MediaStore.Files.FileColumns._ID)))
-                } while (cursor.moveToNext())
-            } else false
+        if (listener.maybeLoadPlaylists() != null) {
+            send(nextVersion())
         }
-        send(nextVersion())
         awaitClose {
             context.contentResolver.unregisterContentObserver(listener)
         }
@@ -167,23 +224,30 @@ class FlowReader(
         minSongLengthSeconds: Long,
         blackListSet: Set<String>,
         whiteListSet: Set<String>,
-        shouldUseEnhancedCoverReading: Boolean?,
-        coverStubUri: String?
+        shouldUseEnhancedCoverReading: Boolean?
     ) =
         // TODO repeatUntilDoneWhenUnpaused makes no sense with non-cancelable
         //  function, make it cancelable
-        if (context.hasAudioPermission() && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
-                    MediaStore.getExternalVolumeNames(context)
-                        .contains(MediaStore.VOLUME_EXTERNAL_PRIMARY)))
-            Reader.readFromMediaStore(
-                context,
-                minSongLengthSeconds,
-                blackListSet,
-                whiteListSet,
-                shouldUseEnhancedCoverReading,
-                coverStubUri = coverStubUri
-            )
-        else ReaderResult.emptyReaderResult()
+        try {
+            if (context.hasAudioPermission())
+                Reader.readFromMediaStore(
+                    context,
+                    minSongLengthSeconds,
+                    blackListSet,
+                    whiteListSet,
+                    shouldUseEnhancedCoverReading
+                )
+            else ReaderResult.emptyReaderResult()
+        } catch (e: IllegalArgumentException) {
+            // MediaStore.getExternalVolumeNames().contains("external_primary") can return
+            // true but this exception might still be thrown. There's no API returning the
+            // exact state that MediaProvider uses, so any checking is prone to races. This
+            // case is one where try-catch works the best.
+            if (e.message == "Volume external_primary not found")
+                ReaderResult.emptyReaderResult()
+            else
+                throw e
+        }
 
     // These expensive Reader calls are only done if we have someone (UI) observing the result AND
     // something changed. The PauseableFlows mechanism allows us to skip any unnecessary work.
@@ -192,11 +256,20 @@ class FlowReader(
         .conflateAndBlockWhenPaused()
         .flatMapLatest {
             manualRefreshTrigger.mapLatest { _ ->
-                if (context.hasAudioPermission() && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R
-                            || MediaStore.getExternalVolumeNames(context)
-                                .contains(MediaStore.VOLUME_EXTERNAL_PRIMARY)))
-                    Reader.fetchPlaylists(context).first
-                else emptyList()
+                try {
+                    if (context.hasAudioPermission())
+                        Reader.fetchPlaylists(context).first
+                    else emptyList()
+                } catch (e: IllegalArgumentException) {
+                    // MediaStore.getExternalVolumeNames().contains("external_primary") can return
+                    // true but this exception might still be thrown. There's no API returning the
+                    // exact state that MediaProvider uses, so any checking is prone to races. This
+                    // case is one where try-catch works the best.
+                    if (e.message == "Volume external_primary not found")
+                        emptyList()
+                    else
+                        throw e
+                }
             }
         }
         .provideReplayCacheInvalidationManager(copyDownstream = Invalidation.Optional)
@@ -224,8 +297,7 @@ class FlowReader(
                                                             minSongLengthSeconds,
                                                             blackListSet,
                                                             whiteListSet,
-                                                            shouldUseEnhancedCoverReading,
-                                                            coverStubUri
+                                                            shouldUseEnhancedCoverReading
                                                         )
                                                     }
                                                 }

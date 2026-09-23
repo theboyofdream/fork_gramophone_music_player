@@ -54,8 +54,7 @@
     <string name="dialog_mime">Tipo de mídia digital (MIME type)</string>
     <string name="dialog_year">Ano</string>
     <string name="dialog_artist">Artista</string>
-    <string name="opensource_info">Open-sourced under GPL-3.0
-\nCopyright %s</string>
+    <string name="opensource_info">Open-sourced under GPL-3.0 \nCopyright %s</string>
     <string name="settings_player_options">Áudio</string>
     <string name="home_menu_settings">Configurações</string>
     <string name="settings_category_links">Links</string>
@@ -319,7 +318,6 @@
     <string name="cannot_play_file">Não é possível abrir este arquivo</string>
     <string name="device_type_ble_headset">Headset Bluetooth LE</string>
     <string name="settings_open_source_licenses">Licenças de código aberto</string>
-    <string name="send_email_manually">Por favor envie o registro para nift4dev@gmail.com - não é possível encontrar o aplicativo de e-mail</string>
     <string name="app_name">Gramophone</string>
     <plurals name="folders_plural">
         <item quantity="one">%d Pasta</item>
@@ -433,12 +431,11 @@
     <string name="spk_encoding_pcm_20bit_big_endian">20-bit PCM (big endian)</string>
     <string name="settings_cookie_summary">Capa do álbum em formato de cookie</string>
     <string name="settings_cookie_info">Capa de cookie</string>
-    <string name="settings_pure_dark">Tema puro escuro</string>
     <string name="settings_pure_dark_summary">Um tema onde todas as superfícies no app são puro preto (pode causar falhas em telas OLED)</string>
     <string name="settings_stop_on_dismiss">Pare ao dispensar</string>
     <string name="settings_stop_on_dismiss_summary">Pare a reprodução quando o app for dispensado dos aplicativos recentes</string>
     <string name="compact_grid">Grade (compacta)</string>
     <string name="sort_by_album_year">Ano do álbum</string>
-    <string name="sort_by_album_artist_year"><![CDATA[Album artist ->year]]></string>
+    <string name="sort_by_album_artist_year"><![CDATA[Album artist -&gt;year]]></string>
     <string name="forbidden_symbol_error">Caractere inválido no nome</string>
 </resources>

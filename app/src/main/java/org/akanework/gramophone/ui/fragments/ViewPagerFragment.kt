@@ -33,6 +33,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
+import coil3.SingletonImageLoader
 import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.color.MaterialColors
@@ -52,7 +53,7 @@ import org.akanework.gramophone.logic.enableEdgeToEdgePaddingListener
 import org.akanework.gramophone.logic.needsManualSnackBarInset
 import org.akanework.gramophone.logic.updateMargin
 import org.akanework.gramophone.logic.utils.SdScanner
-import org.akanework.gramophone.logic.queueWithTitle
+import org.akanework.gramophone.logic.setMediaItemsWithTitle
 import org.akanework.gramophone.ui.MainActivity
 import org.akanework.gramophone.ui.adapters.ViewPager2Adapter
 import org.akanework.gramophone.ui.components.PlayerBottomSheet
@@ -125,6 +126,8 @@ class ViewPagerFragment : BaseFragment(true) {
                 }
 
                 R.id.quick_refresh -> {
+                    val imageLoader = SingletonImageLoader.get(requireContext())
+                    imageLoader.memoryCache?.clear()
                     val playerLayout = activity.playerBottomSheet
                     activity.updateLibrary {
                         showRefreshDoneSnackBar(
@@ -135,6 +138,8 @@ class ViewPagerFragment : BaseFragment(true) {
 
                 R.id.refresh -> {
                     val context = requireContext()
+                    val imageLoader = SingletonImageLoader.get(context)
+                    imageLoader.memoryCache?.clear()
                     val playerLayout = activity.playerBottomSheet
                     MaterialAlertDialogBuilder(context)
                         .setIcon(R.drawable.ic_refresh)
@@ -191,9 +196,10 @@ class ViewPagerFragment : BaseFragment(true) {
                     val controller = activity.getPlayer()
                     runBlocking { activity.reader.songListFlow.first() }.takeIf { it.isNotEmpty() }
                         ?.also {
-                            controller?.shuffleModeEnabled = true
-                            controller?.setMediaItems(
-                                queueWithTitle(it, context?.getString(R.string.category_songs))
+                            controller?.setMediaItemsWithTitle(
+                                it,
+                                title = requireContext().getString(R.string.category_songs),
+                                shuffleEnabled = true,
                             )
                             controller?.prepare()
                             controller?.play()

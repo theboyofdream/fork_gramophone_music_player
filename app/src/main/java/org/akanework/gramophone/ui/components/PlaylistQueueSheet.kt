@@ -1,14 +1,28 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui.components
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.SystemClock
 import android.view.View
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -16,7 +30,6 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -36,34 +49,30 @@ import kotlinx.coroutines.flow.stateIn
 import org.akanework.gramophone.R
 import org.akanework.gramophone.logic.dpToPx
 import org.akanework.gramophone.logic.getBooleanStrict
-import org.akanework.gramophone.logic.getQueueForUi
-import org.akanework.gramophone.logic.loadQueue
 import org.akanework.gramophone.logic.replaceAllSupport
 import org.akanework.gramophone.logic.ui.MyRecyclerView
 import org.akanework.gramophone.logic.utils.Flags
-import org.akanework.gramophone.logic.utils.convertDurationToTimeStamp
 import org.akanework.gramophone.ui.GramophoneTheme
 import org.akanework.gramophone.ui.MainActivity
+import org.akanework.gramophone.ui.fragments.compose.MqState
 import org.akanework.gramophone.ui.fragments.compose.QueueRoot
 import org.akanework.gramophone.ui.fragments.compose.rememberMqState
-import java.util.LinkedList
 
+// TODO:
+//  queue menu flickers when queue sheet isnt full height
 class PlaylistQueueSheet(
     context: Context, private val activity: MainActivity
 ) : BottomSheetDialog(context), Player.Listener {
     private val instance: MediaBrowser?
         get() = activity.getPlayer()
-    private val playlistAdapter: PlaylistCardAdapter
+    val playlistAdapter: PlaylistCardAdapter
     private val touchHelper: ItemTouchHelper
     private val recyclerView: RecyclerView
-    private val durationView: Chronometer
+    val durationView: Chronometer
     private val queueHead: ComposeView
     private val mqEnabled: Boolean
-
-    // depending on the queue state, we may need to modify behaviour of certain UI elements outside
-    // the compose queue elements
-    private var detachedHead = MutableStateFlow(false)
-    private var detachedQueue: Int? = null
+    private var mqState: MqState? = null
+    private var lockEdit = MutableStateFlow(false)
 
     init {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context.applicationContext)
@@ -108,14 +117,6 @@ class PlaylistQueueSheet(
         touchHelper.attachToRecyclerView(recyclerView)
         recyclerView.layoutManager = LinearLayoutManager(context)
         recyclerView.adapter = playlistAdapter
-        playlistAdapter.playlist.first.indexOfFirst { i ->
-            i == (instance?.currentMediaItemIndex ?: 0)
-        }.let { scrollPos ->
-            recyclerView.scrollToPositionWithOffsetCompat(scrollPos,
-                // quick UX hack to show there's more songs above (well, if there is).
-                if (scrollPos >= playlistAdapter.playlist.first.size - 2) 0 else (context
-                    .resources.getDimensionPixelOffset(R.dimen.list_height) * 0.5f).toInt())
-        }
         recyclerView.fastScroll(null, null)
 
         durationView = Chronometer(context)
@@ -151,29 +152,13 @@ class PlaylistQueueSheet(
                 ) {
                     val mqState =
                         rememberMqState(
-                            coroutineScope, instance!!, this@PlaylistQueueSheet,
-                            onDetachHead = {
-                                detachedHead.value = true
-                                detachedQueue = it
-                            },
-                            onResetHead = {
-                                detachedHead.value = false
-                                // detachedQueue is "consumed" by the LaunchedEffect below
-                            },
+                            coroutineScope, activity, this@PlaylistQueueSheet,
                         )
+                    this@PlaylistQueueSheet.mqState = mqState
                     val pagerState = rememberPagerState(
                         initialPage = if (Flags.MQ_PREVIEW) 0 else 1,
                         pageCount = { 2 }
                     )
-
-                    val igiveupnamingvariables by detachedHead.collectAsState()
-                    LaunchedEffect(igiveupnamingvariables) {
-                        if (!detachedHead.value && detachedQueue != null) {
-                            mqState.resetHead(false)
-                            mqState.toggleExpand()
-                            detachedQueue = null
-                        }
-                    }
 
                     QueueRoot(
                         mqState = mqState,
@@ -183,9 +168,9 @@ class PlaylistQueueSheet(
                         mqEnabled = mqEnabled,
                         onDismiss = { dismiss() },
                         onRecyclerScrollTo = {
-                            recyclerView.smoothScrollToPosition(playlistAdapter.playlist.first.indexOfFirst { i ->
+                            mqState.playlist.first.indexOfFirst { i ->
                                 i == (instance?.currentMediaItemIndex ?: 0)
-                            })
+                            }.takeIf { it != -1 }?.let { recyclerView.smoothScrollToPosition(it) }
                         }
                     )
                 }
@@ -213,9 +198,9 @@ class PlaylistQueueSheet(
         mediaItem: MediaItem?,
         reason: @Player.MediaItemTransitionReason Int
     ) {
-        if (detachedHead.value) return
+        if (mqState == null || mqState?.isDetached() == true) return
         val i = instance?.currentMediaItemIndex
-        playlistAdapter.currentMediaItemIndex = i?.let { playlistAdapter.playlist.first.indexOf(i) }
+        playlistAdapter.currentMediaItemIndex = i?.let { mqState!!.playlist.first.indexOf(i) }
     }
 
     override fun onPositionDiscontinuity(
@@ -223,8 +208,8 @@ class PlaylistQueueSheet(
         newPosition: Player.PositionInfo,
         reason: @Player.DiscontinuityReason Int
     ) {
-        if (detachedHead.value) return
-        playlistAdapter.updateTimer()
+        if (mqState == null || mqState?.isDetached() == true) return
+        mqState!!.updateTimer()
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -239,17 +224,25 @@ class PlaylistQueueSheet(
         // playlistAdapter.updateList()
     }
 
-    /**
-     * Force a full update of playlist and timer
-     *
-     * @param mq Inactive queue index. Set to -1 to load the active queue
-     */
-    fun forceUpdate(mq: Int = -1) {
-        playlistAdapter.updateList(mq)
+    fun lockQueue(lock: Boolean) {
+        lockEdit.value = lock
     }
 
-    inner class PlaylistCardAdapter : EditSongAdapter(activity, true) {
-        var playlist: Pair<MutableList<Int>, MutableList<MediaItem>> = dumpPlaylist()
+    fun scrollToPositionWithOffsetCompat(position: Int, offset: Int) {
+        (recyclerView as MyRecyclerView).scrollToPositionWithOffsetCompat(position, offset)
+    }
+
+    fun smoothScrollToCurrentPosition(position: Int) = recyclerView.post {
+        position.takeIf { it != -1 }?.let { recyclerView.smoothScrollToPosition(it) }
+    }
+
+    fun setCurrentMediaItemIndex(currentMediaItemIndex: Int) {
+        recyclerView.post {
+            playlistAdapter.currentMediaItemIndex = currentMediaItemIndex
+        }
+    }
+
+    inner class PlaylistCardAdapter : EditSongAdapter(activity, true, lockEdit) {
         var currentMediaItemIndex: Int? = null
             set(value) {
                 if (field != value) {
@@ -268,7 +261,7 @@ class PlaylistQueueSheet(
             set(value) {
                 if (field != value) {
                     field = value
-                    updateTimer()
+                    mqState?.updateTimer()
                     if (value != null && currentMediaItemIndex != null) {
                         currentMediaItemIndex?.let {
                             notifyItemChanged(it, false)
@@ -278,11 +271,12 @@ class PlaylistQueueSheet(
             }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int, payloads: List<Any?>) {
-            holder.dragHandle.visibility = if (detachedHead.value) View.GONE else View.VISIBLE
-            holder.closeButton.visibility = if (detachedHead.value) View.GONE else View.VISIBLE
+            holder.dragHandle.visibility = if (mqState!!.isDetached()) View.GONE else View.VISIBLE
+            holder.closeButton.visibility = if (mqState!!.isDetached()) View.GONE else View.VISIBLE
             if (payloads.isNotEmpty()) {
                 if (payloads.none { it is Boolean && it }) {
-                    holder.nowPlaying.drawable?.level = if (currentIsPlaying == true) 1 else 0
+                    holder.nowPlaying.drawable?.level =
+                        if (!mqState!!.isDetached() && currentIsPlaying == true) 1 else 0
                     return
                 }
                 if (currentMediaItemIndex == null || position != currentMediaItemIndex) {
@@ -301,7 +295,10 @@ class PlaylistQueueSheet(
             if (holder.nowPlaying.visibility != View.VISIBLE) {
                 holder.nowPlaying.setImageDrawable(
                     NowPlayingDrawable(holder.itemView.context)
-                        .also { it.level = if (currentIsPlaying == true) 1 else 0 })
+                        .also {
+                            it.level =
+                                if (!mqState!!.isDetached() && currentIsPlaying == true) 1 else 0
+                        })
                 holder.nowPlaying.visibility = View.VISIBLE
             }
         }
@@ -310,35 +307,35 @@ class PlaylistQueueSheet(
             (holder.nowPlaying.drawable as? NowPlayingDrawable?)?.level2Done = null
             holder.nowPlaying.setImageDrawable(null)
             holder.nowPlaying.visibility = View.GONE
-            holder.dragHandle.visibility = if (detachedHead.value) View.GONE else View.VISIBLE
-            holder.closeButton.visibility = if (detachedHead.value) View.GONE else View.VISIBLE
+            holder.dragHandle.visibility = if (mqState!!.isDetached()) View.GONE else View.VISIBLE
+            holder.closeButton.visibility = if (mqState!!.isDetached()) View.GONE else View.VISIBLE
             super.onViewRecycled(holder)
         }
 
-        override fun getItemCount(): Int = if (playlist.first.size != playlist.second.size)
-            throw IllegalStateException()
-        else playlist.first.size
+        override fun getItemCount(): Int =
+            if (mqState!!.playlist.first.size != mqState!!.playlist.second.size)
+                throw IllegalStateException()
+            else mqState!!.playlist.first.size
 
         override fun onClick(pos: Int) {
-            if (detachedHead.value) {
-                detachedQueue?.let {
-                    detachedHead.value = false
-                    instance?.loadQueue(it, playlist.first[pos])
+            if (mqState!!.isDetached()) {
+                mqState!!.detachedQueue?.let {
+                    mqState!!.loadDetached(mqState!!.playlist.first[pos])
                 }
             } else {
-                instance?.seekToDefaultPosition(playlist.first[pos])
+                instance?.seekToDefaultPosition(mqState!!.playlist.first[pos])
             }
         }
 
         override fun onRowMoved(from: Int, to: Int) {
             val mediaController = activity.getPlayer()
-            val from1 = playlist.first.removeAt(from)
-            playlist.first.replaceAllSupport { if (it > from1) it - 1 else it }
-            val movedItem = playlist.second.removeAt(from1)
-            val to1 = if (to > 0) playlist.first[to - 1] + 1 else 0
-            playlist.first.replaceAllSupport { if (it >= to1) it + 1 else it }
-            playlist.first.add(to, to1)
-            playlist.second.add(to1, movedItem)
+            val from1 = mqState!!.playlist.first.removeAt(from)
+            mqState!!.playlist.first.replaceAllSupport { if (it > from1) it - 1 else it }
+            val movedItem = mqState!!.playlist.second.removeAt(from1)
+            val to1 = if (to > 0) mqState!!.playlist.first[to - 1] + 1 else 0
+            mqState!!.playlist.first.replaceAllSupport { if (it >= to1) it + 1 else it }
+            mqState!!.playlist.first.add(to, to1)
+            mqState!!.playlist.second.add(to1, movedItem)
             mediaController?.moveMediaItem(from1, to1)
             notifyItemMoved(from, to)
             val currentIndex = currentMediaItemIndex
@@ -350,92 +347,35 @@ class PlaylistQueueSheet(
                 else if (from > to && to <= currentIndex && currentIndex < from)
                     currentMediaItemIndex = currentIndex + 1
             }
-            updateTimer() // TODO: this could be more efficient
+            mqState!!.updateTimer() // TODO: this could be more efficient
         }
 
         override fun removeItem(pos: Int) {
             val instance = activity.getPlayer()
-            val idx = playlist.first.removeAt(pos)
-            playlist.first.replaceAllSupport { if (it > idx) it - 1 else it }
+
+            // remove queue if this is the last item, dismiss if no queues left
+            if (mqState!!.playlist.first.size <= 1) {
+                mqState!!.removeQueue()
+                return
+            }
+
+            val idx = mqState!!.playlist.first.removeAt(pos)
+            mqState!!.playlist.first.replaceAllSupport { if (it > idx) it - 1 else it }
             instance?.removeMediaItem(idx)
-            playlist.second.removeAt(idx)
+            mqState!!.playlist.second.removeAt(idx)
+
             notifyItemRemoved(pos)
             if (pos == currentMediaItemIndex) {
                 notifyItemChanged(currentMediaItemIndex!!, true)
             } else if (pos < (currentMediaItemIndex ?: -1)) {
                 currentMediaItemIndex = currentMediaItemIndex!! - 1
             }
-            updateTimer() // TODO: this could be more efficient
+            mqState!!.updateTimer() // TODO: this could be more efficient
         }
 
-        override fun getItem(pos: Int) = playlist.second[playlist.first[pos]]
+        override fun getItem(pos: Int) = mqState!!.playlist.second[mqState!!.playlist.first[pos]]
         override fun startDrag(holder: ViewHolder) {
             touchHelper.startDrag(holder)
-        }
-
-        fun dumpPlaylist(): Pair<MutableList<Int>, MutableList<MediaItem>> {
-            val items = LinkedList<MediaItem>()
-            val instance = activity.getPlayer()!!
-            for (i in 0 until instance.mediaItemCount) {
-                items.add(instance.getMediaItemAt(i))
-            }
-            val indexes = LinkedList<Int>()
-            val s = instance.shuffleModeEnabled
-            var i = instance.currentTimeline.getFirstWindowIndex(s)
-            while (i != C.INDEX_UNSET) {
-                indexes.add(i)
-                i = instance.currentTimeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, s)
-            }
-            return Pair(indexes, items)
-        }
-
-        /**
-         * Update playlist and timer
-         */
-        fun updateList(
-            mqIndex: Int? = null,
-            newPlaylist: Pair<MutableList<Int>, MutableList<MediaItem>>? = null
-        ) {
-            val mq = mqIndex?.let { instance?.getQueueForUi(mqIndex) }
-            val pl = if (mq != null) {
-                Pair(mq.first, mq.second.queue)
-            } else {
-                newPlaylist ?: dumpPlaylist()
-            }
-            playlist = pl
-            notifyDataSetChanged()
-
-            // update playing indicator, scroll to, drag handle visibility
-            val i = (mq?.second?.startIndex ?: instance?.currentMediaItemIndex).let {
-                if (it == -1) 0 else it
-            }
-            currentMediaItemIndex = i?.let { playlist.first.indexOf(i) }
-            recyclerView.post {
-                recyclerView.smoothScrollToPosition(currentMediaItemIndex ?: 0)
-            }
-
-            updateTimer(mq?.second?.startIndex, mq?.second?.startPositionMs)
-        }
-
-        fun updateTimer(currentMediaItemIndex: Int? = null, currentPosition: Long? = null) {
-            if (currentMediaItemIndex == -1) return
-            val current = currentMediaItemIndex ?: instance?.currentMediaItemIndex?.let {
-                playlist.first.indexOf(it).takeIf { it != -1 }
-            } ?: 0
-            if (current < 0) return
-            val elapsedCurrentMs = currentPosition ?: instance?.currentPosition ?: 0
-            durationView.format = context.getString(
-                R.string.duration_queue,
-                "%s", playlist.second.sumOf { it.mediaMetadata.durationMs ?: 0L }
-                    .convertDurationToTimeStamp(true))
-            if (instance?.isPlaying == true) {
-                durationView.start()
-            } else {
-                durationView.stop()
-            }
-            durationView.base = SystemClock.elapsedRealtime() + playlist.first.subList(current,
-                playlist.first.size).sumOf { playlist.second[it].mediaMetadata.durationMs ?: 0L } -
-                    elapsedCurrentMs + 1000
         }
     }
 }

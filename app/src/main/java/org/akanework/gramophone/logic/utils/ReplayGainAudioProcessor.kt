@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.logic.utils
 
 import androidx.media3.common.C
@@ -59,6 +76,8 @@ class ReplayGainAudioProcessor : BaseAudioProcessor() {
                 if (gain == 1f) {
                     outputBuffer.put(inputBuffer)
                 } else {
+                    // TODO: this should probably use saturated multiplication in case peak metadata
+                    //  is wrong to only clip and not generate total nonsense
                     while (inputBuffer.hasRemaining()) {
                         when (inputAudioFormat.encoding) {
                             C.ENCODING_PCM_8BIT -> outputBuffer.put(
@@ -102,8 +121,6 @@ class ReplayGainAudioProcessor : BaseAudioProcessor() {
     }
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
-        if (Util.getBitDepth(inputAudioFormat.encoding) % 8 != 0)
-            throw IllegalStateException("unsupported pcm encoding ${inputAudioFormat.encoding}")
         if (Flags.TEST_RG_OFFLOAD) {
             return AudioProcessor.AudioFormat.NOT_SET
         }

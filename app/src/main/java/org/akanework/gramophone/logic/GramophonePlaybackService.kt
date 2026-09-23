@@ -50,7 +50,6 @@ import androidx.core.content.IntentCompat
 import androidx.core.content.edit
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.AudioAttributes
-import androidx.media3.common.BundleListRetriever
 import androidx.media3.common.C
 import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Format
@@ -80,28 +79,32 @@ import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.util.EventLogger
 import androidx.media3.extractor.mp3.Mp3Extractor
-import androidx.media3.session.CacheBitmapLoader
-import androidx.media3.session.CommandButton
-import androidx.media3.session.MediaBrowser
-import androidx.media3.session.MediaConstants
+import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
+import androidx.media3.session.addToCommandQueueThenFlush
 import androidx.preference.PreferenceManager
+import androidx.media3.session.CacheBitmapLoader
+import androidx.media3.session.CommandButton
+import androidx.media3.session.MediaBrowser
+import androidx.media3.session.MediaConstants
 import coil3.BitmapImage
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import com.google.common.collect.ImmutableList
-import com.google.common.util.concurrent.AsyncFunction
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.MoreExecutors
 import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -109,8 +112,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.guava.future
+import kotlinx.coroutines.guava.await
 import org.akanework.gramophone.R
 import org.akanework.gramophone.logic.ui.MeiZuLyricsMediaNotificationProvider
 import org.akanework.gramophone.logic.ui.isManualNotificationUpdate
@@ -128,6 +132,7 @@ import org.akanework.gramophone.logic.utils.MediaItemList
 import org.akanework.gramophone.logic.utils.ReplayGainAudioProcessor
 import org.akanework.gramophone.logic.utils.ReplayGainUtil
 import org.akanework.gramophone.logic.utils.SemanticLyrics
+
 import org.akanework.gramophone.logic.utils.exoplayer.EndedWorkaroundPlayer
 import org.akanework.gramophone.logic.utils.exoplayer.GramophoneExtractorsFactory
 import org.akanework.gramophone.logic.utils.exoplayer.GramophoneMediaSourceFactory
@@ -135,12 +140,21 @@ import org.akanework.gramophone.logic.utils.exoplayer.GramophoneRenderFactory
 import org.akanework.gramophone.ui.AudioPreviewActivity
 import org.akanework.gramophone.ui.LyricWidgetProvider
 import org.akanework.gramophone.ui.MainActivity
+import org.akanework.gramophone.ui.fragments.compose.MqState.Companion.CLIENT_QB_REFRESH_ALL
+import org.akanework.gramophone.ui.fragments.compose.MqState.Companion.CLIENT_QB_REFRESH_CLEAR
+import org.akanework.gramophone.ui.fragments.compose.MqState.Companion.CLIENT_QB_REFRESH_ITEM
+import org.akanework.gramophone.ui.fragments.compose.MqState.Companion.CLIENT_QB_REFRESH_LIST
+import org.akanework.gramophone.ui.fragments.compose.MqState.Companion.CLIENT_QB_REFRESH_QUEUES
 import org.nift4.mediastorecompat.MediaStoreCompat
 import uk.akane.libphonograph.dynamicitem.Favorite
 import uk.akane.libphonograph.items.albumId
 import uk.akane.libphonograph.manipulator.ItemManipulator
 import uk.akane.libphonograph.manipulator.PlaylistSerializer
 import uk.akane.libphonograph.manipulator.PlaylistSerializer.Entry
+import java.util.concurrent.Executor
+import kotlin.collections.emptyList
+import kotlin.collections.map
+import kotlin.collections.plus
 import kotlin.random.Random
 
 
@@ -149,7 +163,7 @@ import kotlin.random.Random
  * It's using exoplayer2 as its player backend.
  */
 class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Listener,
-    MediaLibraryService.MediaLibrarySession.Callback, Player.Listener, AnalyticsListener,
+    MediaLibrarySession.Callback, Player.Listener, AnalyticsListener,
     SharedPreferences.OnSharedPreferenceChangeListener {
 
     companion object {
@@ -168,14 +182,16 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         const val SERVICE_GET_LYRICS = "get_lyrics"
         const val SERVICE_TIMER_CHANGED = "changed_timer"
         const val SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY = "set_media_items_seamlessly"
+        const val SERVICE_SET_MEDIA_ITEMS_ATOMIC = "set_media_items_atomic"
 
         const val SERVICE_QB_GET_INACTIVE_LIST = "qb_get_inactive_list"
         const val SERVICE_QB_LOAD_QUEUE = "qb_load"
         const val SERVICE_QB_GET_QUEUE_FOR_UI = "qb_get_queue_for_ui"
         const val SERVICE_QB_DEL = "qb_delete"
         const val SERVICE_QB_REORDER = "qb_reorder"
-        const val SERVICE_QB_PIN_QUEUE ="qb_pin_queue"
-        const val SERVICE_QB_UNPIN_QUEUE ="qb_unpin_queue"
+        const val SERVICE_QB_PIN_QUEUE = "qb_pin_queue"
+        const val SERVICE_QB_UNPIN_QUEUE = "qb_unpin_queue"
+        const val SERVICE_QB_RENAME_QUEUE = "qb_rename"
 
         const val SERVICE_QB_AGE = "qb_age"
 
@@ -188,6 +204,9 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     private var mediaSession: MediaLibrarySession? = null
     val endedWorkaroundPlayer
         get() = mediaSession?.player as EndedWorkaroundPlayer?
+
+    private lateinit var libraryTreeLoader: LibraryTreeLoader
+
     private var controller: MediaBrowser? = null
     lateinit var qb: QueueBoard
     private val sendLyrics = Runnable { scheduleSendingLyrics(false) }
@@ -197,11 +216,13 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         get() = lyrics as? SemanticLyrics.SyncedLyrics
     private lateinit var customCommands: List<CommandButton>
     private lateinit var handler: Handler
+    private lateinit var mainExecutor: Executor
     private lateinit var playbackHandler: Handler
     private lateinit var nm: NotificationManagerCompat
     private lateinit var lastPlayedManager: LastPlayedManager
     private lateinit var prefs: SharedPreferences
     private var lastSentHighlightedLyric: String? = null
+    private var lastSentNotificationLyric: String? = null
     private lateinit var afFormatTracker: AfFormatTracker
     private lateinit var rgAp: ReplayGainAudioProcessor
     private var rgMode = 0 // 0 = disabled, 1 = track, 2 = album, 3 = smart
@@ -219,7 +240,8 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     private var bitrate: Int? = null
     private var btInfo: BtCodecInfo? = null
     private var proxy: BtCodecInfo.Companion.Proxy? = null
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(Dispatchers.Main)
+    private val lastPlaylistLoaded = CompletableDeferred<Unit>()
     private val lyricsFetcher = CoroutineScope(Dispatchers.IO.limitedParallelism(1))
     private val bitrateFetcher = CoroutineScope(Dispatchers.IO.limitedParallelism(1))
 
@@ -236,6 +258,15 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             customCommands[1]
         else
             customCommands[0]
+
+    private fun getFavoriteCommand(): CommandButton {
+        val isFavorite = (controller?.currentMediaItem?.mediaMetadata?.userRating as? HeartRating)?.isHeart == true
+        return if (isFavorite) {
+            customCommands[6]
+        } else {
+            customCommands[5]
+        }
+    }
 
     private val timer: Runnable = Runnable {
         if (timerPauseOnEnd) {
@@ -318,6 +349,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         internalPlaybackThread.start()
         playbackHandler = Handler(internalPlaybackThread.looper)
         handler = Handler(Looper.getMainLooper())
+        mainExecutor = ContextCompat.getMainExecutor(this)
         nm = NotificationManagerCompat.from(this)
         prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
         qb = QueueBoard(this)
@@ -362,6 +394,14 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     .setDisplayName(getString(R.string.repeat_mode))
                     .setPlayerCommand(Player.COMMAND_SET_REPEAT_MODE, Player.REPEAT_MODE_OFF)
                     .build(),
+                CommandButton.Builder(CommandButton.ICON_HEART_UNFILLED) // not favorite, click will favorite
+                    .setDisplayName(getString(R.string.favorite))
+                    .setSessionCommand(SessionCommand(SessionCommand.COMMAND_CODE_SESSION_SET_RATING), HeartRating(true))
+                    .build(),
+                CommandButton.Builder(CommandButton.ICON_HEART_FILLED) // favorite, click will unfavorite
+                    .setDisplayName(getString(R.string.unfavorite))
+                    .setSessionCommand(SessionCommand(SessionCommand.COMMAND_CODE_SESSION_SET_RATING), HeartRating(false))
+                    .build(),
             )
         afFormatTracker = AfFormatTracker(this, playbackHandler, handler)
         afFormatTracker.formatChangedCallback = { format, period ->
@@ -394,15 +434,17 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         prefs.registerOnSharedPreferenceChangeListener(this)
         onSharedPreferenceChanged(prefs, null) // read initial values
         val player = EndedWorkaroundPlayer(
+            this,
+            prefs,
             exoPlayer = ExoPlayer.Builder(
                 this,
                 GramophoneRenderFactory(
                     this, rgAp, this::onAudioSinkInputFormatChanged,
                     afFormatTracker::setAudioSink
                 )
-                    .setPcmEncodingRestrictionLifted(true)
+                    .setEnableHighResolutionPcmOutput(true)
                     .setEnableDecoderFallback(true)
-                    .setEnableAudioTrackPlaybackParams(true)
+                    .setEnableAudioOutputPlaybackParameters(true)
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON),
                 GramophoneMediaSourceFactory(
                     DefaultDataSource.Factory(this),
@@ -441,6 +483,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                 .build(),
             { lyrics },
             queueBoard = qb,
+            getNotificationLyric = { lastSentNotificationLyric }
         )
         player.exoPlayer.addAnalyticsListener(EventLogger())
         player.exoPlayer.addAnalyticsListener(afFormatTracker)
@@ -448,6 +491,12 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         player.exoPlayer.setShuffleOrder(CircularShuffleOrder(player, 0, 0, Random.nextLong()))
         lastPlayedManager = LastPlayedManager(this, player)
         lastPlayedManager.allowSavingState = false
+        libraryTreeLoader = LibraryTreeLoader(
+            this,
+            gramophoneApplication,
+            lifecycleScope,
+            prefs
+        )
 
         mediaSession =
             MediaLibrarySession
@@ -489,9 +538,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                                 .also {
                                     completer.addCancellationListener(
                                         { it.dispose() },
-                                        ContextCompat.getMainExecutor(
-                                            this@GramophonePlaybackService
-                                        )
+                                        mainExecutor
                                     )
                                 }
                             "coil load for ${data.hashCode()}"
@@ -527,9 +574,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                                 .also {
                                     completer.addCancellationListener(
                                         { it.dispose() },
-                                        ContextCompat.getMainExecutor(
-                                            this@GramophonePlaybackService
-                                        )
+                                        mainExecutor
                                     )
                                 }
                             "coil load for $uri"
@@ -553,6 +598,8 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     )
                 )
                 .setSystemUiPlaybackResumptionOptIn(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                // Workaround for AA bug where content cannot be scrolled (androidx/media#2192)
+                .setPeriodicPositionUpdateEnabled(false)
                 .build()
         addSession(mediaSession!!)
         controller = MediaBrowser.Builder(this, mediaSession!!.token).buildAsync().get()
@@ -592,49 +639,59 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             }
         }
         scope.launch {
-            lastPlayedManager.restore { items, factory ->
+            lastPlayedManager.restore { items ->
                 if (mediaSession == null) return@restore
                 if (items != null) {
-                    if (endedWorkaroundPlayer?.nextShuffleOrder != null)
-                        throw IllegalStateException("shuffleFactory was found orphaned")
-                    if (endedWorkaroundPlayer?.nextTitle != null)
-                        throw IllegalStateException("title was found orphaned")
-                    if (lastPlayedManager.allowSavingState)
-                        return@restore // media items were already applied to player
-                    endedWorkaroundPlayer?.nextShuffleOrder = factory.toFactory()
-                    endedWorkaroundPlayer?.nextTitle = "LastPlayedManager" // TODO(MQ)
-                    val list = runBlocking { mapMediaItemsForFavorites(items.mediaItems) }
-                    try {
-                        mediaSession?.player?.setMediaItems(
-                            list,
-                            items.startIndex,
-                            items.startPositionMs
-                        )
-                    } catch (e: IllegalSeekPositionException) {
+                    val list = mapMediaItemsForFavorites(items.items.mediaItems)
+                    withContext(Dispatchers.Main) {
+                        if (lastPlayedManager.allowSavingState)
+                            return@withContext // media items were already applied to player
                         try {
-                            mediaSession?.player?.setMediaItems(list)
-                            Log.w(TAG, "failed to restore index", e)
-                        } catch (_: IllegalSeekPositionException) {
+                            if (list.size >= items.items.startIndex) {
+                                endedWorkaroundPlayer?.setMediaItems(
+                                    list,
+                                    items.items.startIndex,
+                                    items.items.startPositionMs,
+                                    items.title,
+                                    false, /* TODO(MQ) */
+                                    true, /* TODO(MQ) */
+                                    items.isEnded,
+                                    items.repeatMode,
+                                    items.shuffle,
+                                    items.seed,
+                                    items.playbackParameters,
+                                )
+                            } else {
+                                endedWorkaroundPlayer?.setMediaItems(
+                                    list,
+                                    C.INDEX_UNSET,
+                                    C.TIME_UNSET,
+                                    items.title,
+                                    false, /* TODO(MQ) */
+                                    true, /* TODO(MQ) */
+                                    items.isEnded,
+                                    items.repeatMode,
+                                    items.shuffle,
+                                    items.seed,
+                                    items.playbackParameters,
+                                )
+                                Log.w(TAG, "failed to restore index")
+                            }
+                        } catch (e: IllegalSeekPositionException) {
                             Log.e(TAG, "failed to restore", e)
-                            // invalid data, whatever...
-                            endedWorkaroundPlayer?.nextShuffleOrder = null
-                            endedWorkaroundPlayer?.nextTitle = null
+                        }
+                        if (mediaSession?.connectedControllers?.find {
+                                it.connectionHints
+                                    .getBoolean("PrepareWhenReady", false)
+                            } != null) {
+                            handler.post { endedWorkaroundPlayer?.prepare() }
                         }
                     }
-                    if (endedWorkaroundPlayer?.nextShuffleOrder != null)
-                        throw IllegalStateException("shuffleFactory was not consumed during restore")
-                    if (endedWorkaroundPlayer?.nextTitle != null)
-                        throw IllegalStateException("title was not consumed during restore")
-                    if (mediaSession?.connectedControllers?.find {
-                            it.connectionHints
-                                .getBoolean("PrepareWhenReady", false)
-                        } != null) {
-                        handler.post { mediaSession?.player?.prepare() }
-                    }
-                }
+                } else
+                    lastPlaylistLoaded.complete(Unit)
             }
         }
-        scope.launch {
+        scope.launch(Dispatchers.Default) {
             gramophoneApplication.reader.playlistListFlow.map { it.find { p -> p is Favorite } }
                 .collect { list ->
                     val ids = list?.songList?.map { it.mediaId } ?: emptyList()
@@ -646,11 +703,16 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                                     ?.isHeart == true
                                 val shouldBeHeart = ids.contains(item.mediaId)
                                 if (isHeart != shouldBeHeart ||
-                                    item.mediaMetadata.userRating !is HeartRating) {
-                                    controller.replaceMediaItem(i, item
-                                        .buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon()
-                                            .setUserRating(HeartRating(shouldBeHeart))
-                                            .build()).build())
+                                    item.mediaMetadata.userRating !is HeartRating
+                                ) {
+                                    controller.replaceMediaItem(
+                                        i, item
+                                            .buildUpon().setMediaMetadata(
+                                                item.mediaMetadata.buildUpon()
+                                                    .setUserRating(HeartRating(shouldBeHeart))
+                                                    .build()
+                                            ).build()
+                                    )
                                 }
                             }
                         }
@@ -793,8 +855,9 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         // Important: this must happen before sending stop() as that changes state ENDED -> IDLE
         lastPlayedManager.save()
         scope.cancel()
-        mediaSession!!.player.stop()
+        endedWorkaroundPlayer!!.stop()
         handler.removeCallbacks(timer)
+        handler.removeCallbacks(sendLyrics)
         mediaSession!!.setOptOutOfMediaButtonPlaybackResumption(controller!!.currentTimeline.isEmpty)
         proxy?.let {
             it.adapter.closeProfileProxy(BluetoothProfile.A2DP, it.a2dp)
@@ -802,7 +865,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         controller!!.release()
         controller = null
         mediaSession!!.release()
-        mediaSession!!.player.release()
+        endedWorkaroundPlayer!!.release()
         mediaSession = null
         broadcastAudioSessionClose()
         LyricWidgetProvider.update(this)
@@ -831,21 +894,24 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                 builder.setMediaButtonPreferences(
                     ImmutableList.of(
                         getRepeatCommand(),
-                        getShufflingCommand()
+                        getShufflingCommand(),
+                        getFavoriteCommand()
                     )
                 )
             }
         }
         if (controller.connectionHints.getBoolean("PrepareWhenReady", false) &&
-            this.mediaSession?.player?.currentTimeline?.isEmpty == false
+            endedWorkaroundPlayer?.currentTimeline?.isEmpty == false
         ) {
             handler.post { this.controller?.prepare() }
         }
+        availableSessionCommands.add(SessionCommand.COMMAND_CODE_SESSION_SET_RATING)
         availableSessionCommands.add(SessionCommand(SERVICE_SET_TIMER, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QUERY_TIMER, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_GET_LYRICS, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_GET_AUDIO_FORMAT, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY, Bundle.EMPTY))
+        availableSessionCommands.add(SessionCommand(SERVICE_SET_MEDIA_ITEMS_ATOMIC, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QB_GET_INACTIVE_LIST, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QB_GET_QUEUE_FOR_UI, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QB_LOAD_QUEUE, Bundle.EMPTY))
@@ -853,6 +919,8 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         availableSessionCommands.add(SessionCommand(SERVICE_QB_REORDER, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QB_PIN_QUEUE, Bundle.EMPTY))
         availableSessionCommands.add(SessionCommand(SERVICE_QB_UNPIN_QUEUE, Bundle.EMPTY))
+        availableSessionCommands.add(SessionCommand(SERVICE_QB_RENAME_QUEUE, Bundle.EMPTY))
+        availableSessionCommands.add(SessionCommand(SERVICE_QB_AGE, Bundle.EMPTY))
         return builder.setAvailableSessionCommands(availableSessionCommands.build()).build()
     }
 
@@ -876,6 +944,10 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
         var restart = false
+        if (key == null || key == "notification_lyrics" || key == "status_bar_lyrics") {
+            scheduleSendingLyrics(false)
+            endedWorkaroundPlayer?.updateLyricNow()
+        }
         if (key == null || key == "rg_mode") {
             rgMode = prefs.getStringStrict("rg_mode", "0")!!.toInt()
             restart = !computeRgMode(true)
@@ -966,6 +1038,61 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         customCommand: SessionCommand,
         args: Bundle
     ): ListenableFuture<SessionResult> {
+        if (customCommand.customAction == SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY
+            || customCommand.customAction == SERVICE_SET_MEDIA_ITEMS_ATOMIC) {
+            val songList = MediaItemList.getList(
+                customCommand.customExtras.getBinder("items")!!)
+            val position = customCommand.customExtras.getInt("position")
+            val title = customCommand.customExtras.getString("title")!!
+            val seamless = customCommand.customAction == SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY
+            val itemsFuture = Futures.transform(
+                onAddMediaItems(session, controller, songList),
+                { songList ->
+                    if (seamless) {
+                        endedWorkaroundPlayer!!.setMediaItemsSeamlessly(songList,
+                            position, null, title, pinned = false, original = true,
+                            repeatMode = null, shuffleModeEnabled = null, newShuffleOrder = null,
+                            playbackParameters = null, ended = false,
+                             )
+                    } else {
+                        val shuffleModeEnabled = if (customCommand.customExtras.containsKey("shuffleEnabled"))
+                            customCommand.customExtras.getBoolean("shuffleEnabled") else null
+                        val repeatMode = if (customCommand.customExtras.containsKey("repeatMode"))
+                            customCommand.customExtras.getInt("repeatMode") else null
+                        endedWorkaroundPlayer!!.setMediaItems(songList, startIndex = position,
+                            startPositionMs = C.TIME_UNSET, title, pinned = false, original = true,
+                            newShuffleOrder = null, ended = false, repeatMode = repeatMode,
+                            shuffleModeEnabled = shuffleModeEnabled, playbackParameters = null)
+                    }
+                    SessionResult(SessionResult.RESULT_SUCCESS)
+                },
+                mainExecutor
+            )
+            // Ensure no further player commands (such as play) are executed until we're done.
+            session.addToCommandQueueThenFlush(controller) { Futures.transform(itemsFuture,
+                { null }, MoreExecutors.directExecutor()) }
+            return itemsFuture
+        }
+
+        fun buildMqCustomCommand(action: String, queueId: Long?): SessionCommand {
+            return SessionCommand(action, Bundle.EMPTY).apply {
+                val plr = endedWorkaroundPlayer!!
+                queueId?.let {
+                    customExtras.putLong("queueId", it)
+                }
+                if (action != CLIENT_QB_REFRESH_CLEAR) {
+                    customExtras.putBinder(
+                        "activeQueue",
+                        MultiQueueList(listOf(plr.getActiveQueue()))
+                    )
+                    customExtras.putBinder(
+                        "inactiveQueues",
+                        MultiQueueList(qb.getInactiveQueues().map { it.copy(queue = ArrayList()) })
+                    )
+                }
+            }
+        }
+
         return Futures.immediateFuture(
             when (customCommand.customAction) {
                 SERVICE_SET_TIMER -> {
@@ -1048,90 +1175,175 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     }
                 }
 
-                SERVICE_SET_MEDIA_ITEMS_SEAMLESSLY -> {
-                    val songList = MediaItemList.getList(
-                        customCommand.customExtras.getBinder("items")!!)
-                    val position = customCommand.customExtras.getInt("position")
-                    val title = customCommand.customExtras.getString("title")!!
-                    val currentItem = endedWorkaroundPlayer!!.currentMediaItem
-                    if (currentItem?.mediaId == songList[position].mediaId) {
-                        val index = endedWorkaroundPlayer!!.currentMediaItemIndex
-                        val isLast = endedWorkaroundPlayer!!.mediaItemCount - index == 1
-                        endedWorkaroundPlayer!!.cloneQueue(title, newIsPinned = false,
-                            original = true)
-                        if (index == 0)
-                            endedWorkaroundPlayer!!.addMediaItems(0,
-                                songList.subList(0, position))
-                        else
-                            endedWorkaroundPlayer!!.replaceMediaItems(0, index,
-                                songList.subList(0, position))
-                        endedWorkaroundPlayer!!.replaceMediaItem(position,
-                            songList[position])
-                        if (isLast)
-                            endedWorkaroundPlayer!!.addMediaItems(if (songList.size > position + 1)
-                                songList.subList(position + 1, songList.size) else emptyList())
-                        else
-                            endedWorkaroundPlayer!!.replaceMediaItems(position + 1,
-                                Int.MAX_VALUE, if (songList.size > position +
-                                    1) songList.subList(position + 1, songList.size)
-                                else emptyList())
-                        endedWorkaroundPlayer!!.currentIsOriginal = true
-                    } else {
-                        endedWorkaroundPlayer!!.setMediaItems(songList, position,
-                            C.TIME_UNSET, title, pinned = false, original = true)
-                    }
-                    SessionResult(SessionResult.RESULT_SUCCESS)
-                }
-
                 SERVICE_QB_GET_INACTIVE_LIST -> {
                     SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
-                        val queueList: List<MultiQueueObject> = qb.getInactiveQueues()
+                        val queueList: List<MultiQueueObject> = qb.getInactiveQueues().map { it.copy(queue = ArrayList()) }
                         val binder = MultiQueueList(queueList)
                         res.extras.putBinder("allQueues", binder)
                     }
                 }
 
                 SERVICE_QB_GET_QUEUE_FOR_UI -> {
-                    SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
-                        val index = customCommand.customExtras.getInt("index")
-                        val queueList: List<MultiQueueObject> = qb.getQueue(index)
-                        val binder = MultiQueueList(queueList)
-                        res.extras.putBinder("allQueues", binder)
+                    try {
+                        val queueId = customCommand.customExtras.getLong("queueId")
+                        val queue: MultiQueueObject = if (queueId != -1L) {
+                            qb.getInactiveQueue(queueId)
+                        } else {
+                            endedWorkaroundPlayer!!.getActiveQueue()
+                        }!!
+                        SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
+                            val binder = MultiQueueList(listOf(queue))
+                            res.extras.putBinder("allQueues", binder)
+                        }
+                    } catch (e: IllegalStateException) {
+                        SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE)
                     }
                 }
 
                 SERVICE_QB_LOAD_QUEUE -> {
-                    val index = customCommand.customExtras.getInt("index")
+                    val queueId = customCommand.customExtras.getLong("queueId")
                     val startIndex = customCommand.customExtras.getInt("startIndex")
-                    qb.commitQueue(index, startIndex)
-                    SessionResult(SessionResult.RESULT_SUCCESS)
+
+                    val index = qb.masterQueues.indexOfFirst { it.id == queueId }
+
+                    if (index != -1) {
+                        qb.commitQueue(index, startIndex)
+
+                        for (controller in mediaSession!!.connectedControllers) {
+                            val customCommand = buildMqCustomCommand(CLIENT_QB_REFRESH_ALL, null)
+                            mediaSession!!.sendCustomCommand(
+                                controller,
+                                customCommand,
+                                Bundle.EMPTY
+                            )
+                        }
+                        SessionResult(SessionResult.RESULT_SUCCESS)
+                    } else {
+                        SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE)
+                    }
                 }
 
                 SERVICE_QB_PIN_QUEUE -> {
-                    val index = customCommand.customExtras.getInt("index")
-                    val status = if (index == -1) {
-                        endedWorkaroundPlayer?.currentIsPinned = true
+                    val plr = endedWorkaroundPlayer!!
+                    val queueId = customCommand.customExtras.getLong("queueId")
+                    val status = if (queueId == plr.currentQueueId) {
+                        plr.currentIsPinned = true
                         true
-                    } else qb.pinQueue(index)
-                    SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
-                        res.extras.putBoolean("status", status)
+                    } else {
+                        val index = qb.masterQueues.indexOfFirst { it.id == queueId }
+                        if (index == -1) {
+                            false
+                        } else {
+                            qb.pinQueue(index)
+                        }
                     }
+                    if (status) {
+                        for (controller in mediaSession!!.connectedControllers) {
+                            val customCommand = buildMqCustomCommand(CLIENT_QB_REFRESH_ITEM, queueId)
+                            mediaSession!!.sendCustomCommand(controller, customCommand, Bundle.EMPTY)
+                        }
+                    }
+                    SessionResult(SessionResult.RESULT_SUCCESS)
                 }
 
                 SERVICE_QB_UNPIN_QUEUE -> {
-                    val index = customCommand.customExtras.getInt("index")
-                    val expiry = qb.unpinQueue(index)
-                    SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
-                        res.extras.putLong("expiry", expiry)
+                    val plr = endedWorkaroundPlayer!!
+                    val queueId = customCommand.customExtras.getLong("queueId")
+                    val status = if (queueId == plr.currentQueueId) {
+                        endedWorkaroundPlayer!!.currentIsPinned = false
+                        true
+                    } else {
+                        val index = qb.masterQueues.indexOfFirst { it.id == queueId }
+                        if (index == -1) {
+                            false
+                        } else {
+                            qb.unpinQueue(index)
+                        }
                     }
+                    if (status) {
+                        for (controller in mediaSession!!.connectedControllers) {
+                            val customCommand = buildMqCustomCommand(CLIENT_QB_REFRESH_ITEM, queueId)
+                            mediaSession!!.sendCustomCommand(controller, customCommand, Bundle.EMPTY)
+                        }
+                    }
+                    SessionResult(SessionResult.RESULT_SUCCESS)
                 }
 
                 SERVICE_QB_DEL -> {
-                    val index = customCommand.customExtras.getInt("index")
-                    val status = qb.deleteQueue(index)
+                    val plr = endedWorkaroundPlayer!!
+                    val queueId = customCommand.customExtras.getLong("queueId")
+                    var refreshLevel = CLIENT_QB_REFRESH_ALL
+
+                    val status: Boolean = if (queueId == plr.currentQueueId) {
+                        // active queue
+                        try {
+                            val nextQueueIndex = qb.getInactiveQueues().size - 1
+                            if (nextQueueIndex < 0) {
+                                plr.clearMediaItems()
+                                refreshLevel = CLIENT_QB_REFRESH_CLEAR
+                                true
+                            } else {
+                                val currentQueueId = plr.currentQueueId
+                                val nextQueue = qb.getInactiveQueue(nextQueueIndex)!!
+                                qb.commitQueue(nextQueueIndex, nextQueue.startIndex)
+                                currentQueueId?.let {
+                                    // TODO: nick plz do delete active queue if this is too cursed
+                                    qb.deleteQueue(currentQueueId)
+                                }
+                                refreshLevel = CLIENT_QB_REFRESH_ALL
+                                true
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, e.message.toString(), e)
+                            false
+                        }
+
+                    } else {
+                        // inactive queues
+                        refreshLevel = CLIENT_QB_REFRESH_QUEUES
+                        val ret = qb.deleteQueue(queueId)
+                        ret
+                    }
+
+                    if (status) {
+                        for (controller in mediaSession!!.connectedControllers) {
+                            val customCommand = buildMqCustomCommand(refreshLevel, null)
+                            mediaSession!!.sendCustomCommand(controller, customCommand, Bundle.EMPTY)
+                        }
+                    }
+                    SessionResult(SessionResult.RESULT_SUCCESS)
+                }
+
+                SERVICE_QB_RENAME_QUEUE -> {
+                    val plr = endedWorkaroundPlayer!!
+                    val queueId = customCommand.customExtras.getLong("queueId")
+                    val title = customCommand.customExtras.getString("title")
+                    val dryRun = customCommand.customExtras.getBoolean("dryRun")
+
+                    val status = if (title.isNullOrBlank()) {
+                        false
+                    } else if (queueId == plr.currentQueueId) {
+                        if (qb.masterQueues.any { it.title == title }) {
+                            false
+                        } else {
+                            if (!dryRun) {
+                                plr.currentTitle = title
+                            }
+                            true
+                        }
+                    } else {
+                        val index = qb.masterQueues.indexOfFirst { it.id == queueId }
+                        qb.renameQueue(index, title, dryRun)
+                    }
+                    if (status) {
+                        for (controller in mediaSession!!.connectedControllers) {
+                            val customCommand = buildMqCustomCommand(CLIENT_QB_REFRESH_ITEM, queueId)
+                            mediaSession!!.sendCustomCommand(controller, customCommand, Bundle.EMPTY)
+                        }
+                    }
                     SessionResult(SessionResult.RESULT_SUCCESS).also { res ->
                         res.extras.putBoolean("status", status)
-                        }
+                    }
                 }
 
                 SERVICE_QB_AGE -> {
@@ -1164,8 +1376,16 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         isForPlayback: Boolean
     ): ListenableFuture<MediaItemsWithStartPosition> {
         val settable = SettableFuture.create<MediaItemsWithStartPosition>()
+        if (isForPlayback) {
+            scope.launch {
+                lastPlaylistLoaded.await()
+                Util.handlePlayButtonAction(endedWorkaroundPlayer)
+                settable.setException(MediaSession.ManuallyHandlePlaybackResumption())
+            }
+            return settable
+        }
         val job = scope.launch {
-            lastPlayedManager.restore { items, factory ->
+            lastPlayedManager.restore { items ->
                 if (items == null) {
                     settable.setException(
                         NullPointerException(
@@ -1173,43 +1393,29 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                         ).also { Log.e(TAG, Log.getThrowableString(it)!!) }
                     )
                 } else {
-                    if (endedWorkaroundPlayer?.nextShuffleOrder != null)
-                        throw IllegalStateException("shuffleFactory was found orphaned")
-                    if (endedWorkaroundPlayer?.nextTitle != null)
-                        throw IllegalStateException("title was found orphaned")
-                    if (isForPlayback && items.mediaItems.isNotEmpty()) {
-                        val list = runBlocking { mapMediaItemsForFavorites(items.mediaItems) }
-                        endedWorkaroundPlayer?.nextShuffleOrder = factory.toFactory()
-                        endedWorkaroundPlayer?.nextTitle = "EndedWorkaroundPlayer" // TODO(MQ)
-                        settable.set(MediaItemsWithStartPosition(list, items.startIndex,
-                            items.startPositionMs))
-                        if (endedWorkaroundPlayer?.nextShuffleOrder != null)
-                            throw IllegalStateException("shuffleFactory was not consumed during resumption")
-                        if (endedWorkaroundPlayer?.nextTitle != null)
-                            throw IllegalStateException("title was not consumed during resumption")
-                    } else if (items.mediaItems.isNotEmpty()) {
-                        var theItem = items.mediaItems[items.startIndex]
+                    if (items.items.mediaItems.isNotEmpty()) {
+                        var theItem = items.items.mediaItems[items.items.startIndex]
                         if (theItem.mediaMetadata.durationMs != null &&
                             theItem.mediaMetadata.durationMs!! > 0 &&
-                            items.startPositionMs != C.TIME_UNSET
+                            items.items.startPositionMs != C.TIME_UNSET
                         ) {
                             theItem = theItem.buildUpon()
                                 .setMediaMetadata(
                                     theItem.mediaMetadata.buildUpon()
                                     .setExtras(Bundle(theItem.mediaMetadata.extras).apply {
-                                        if (items.startPositionMs == 0L) {
+                                        if (items.items.startPositionMs == 0L) {
                                             putInt(
                                                 MediaConstants.EXTRAS_KEY_COMPLETION_STATUS,
                                                 MediaConstants.EXTRAS_VALUE_COMPLETION_STATUS_NOT_PLAYED
                                             )
-                                        } else if (items.startPositionMs != theItem.mediaMetadata.durationMs!!) {
+                                        } else if (items.items.startPositionMs != theItem.mediaMetadata.durationMs!!) {
                                             putInt(
                                                 MediaConstants.EXTRAS_KEY_COMPLETION_STATUS,
                                                 MediaConstants.EXTRAS_VALUE_COMPLETION_STATUS_PARTIALLY_PLAYED
                                             )
                                             putDouble(
                                                 MediaConstants.EXTRAS_KEY_COMPLETION_PERCENTAGE,
-                                                (items.startPositionMs.toDouble() /
+                                                (items.items.startPositionMs.toDouble() /
                                                         theItem.mediaMetadata.durationMs!!)
                                                     .coerceIn(0.0, 1.0)
                                             )
@@ -1225,11 +1431,11 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                         settable.set(
                             MediaItemsWithStartPosition(
                                 listOf(theItem),
-                                0, items.startPositionMs
+                                0, items.items.startPositionMs
                             )
                         )
                     } else {
-                        settable.set(items)
+                        settable.set(items.items)
                     }
                 }
             }
@@ -1242,25 +1448,6 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         return settable
     }
 
-    /*override fun onGetLibraryRoot(
-        session: MediaLibrarySession,
-        browser: MediaSession.ControllerInfo,
-        params: LibraryParams?
-    ): ListenableFuture<LibraryResult<MediaItem>> {
-        val outParams = LibraryParams.Builder()
-            .setOffline(true)
-            .setSuggested(false)
-            .setRecent(false)
-            .build()
-        val item = MediaItem.Builder()
-            .setMediaId("root")
-            .setMediaMetadata(MediaMetadata.Builder()
-                .setIsBrowsable(true)
-                .setIsPlayable(false)
-                .build())
-            .build()
-        return Futures.immediateFuture(LibraryResult.ofItem(item, outParams))
-    }*/
 
     override fun onTracksChanged(tracks: Tracks) {
         if (!tracks.isEmpty && !tracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) {
@@ -1280,6 +1467,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             var lrc: SemanticLyrics? = null
             if (format != null) {
                 lrc = loadAndParseLyricsFile(
+                    applicationContext,
                     mediaItem?.getFile(),
                     format.sampleMimeType, options
                 )
@@ -1423,7 +1611,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
             bitrate = null
             bitrateFetcher.launch {
-                bitrate = mediaItem?.getBitrate() // TODO subtract cover size
+                bitrate = mediaItem?.getBitrate(this@GramophonePlaybackService) // TODO subtract cover size
                 this@GramophonePlaybackService.mediaSession?.broadcastCustomCommand(
                     SessionCommand(SERVICE_GET_AUDIO_FORMAT, Bundle.EMPTY),
                     Bundle.EMPTY
@@ -1433,6 +1621,8 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             //lyrics = null
             //scheduleSendingLyrics(true)
         }
+        lastSentNotificationLyric = null
+        lastSentHighlightedLyric = null
 
         // reshuffle queue when shuffle AND repeat all are enabled
         val player = endedWorkaroundPlayer
@@ -1448,6 +1638,24 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     Random.nextLong()
                 )
             )
+            for (controller in mediaSession!!.connectedControllers) {
+                val customCommand = SessionCommand(CLIENT_QB_REFRESH_LIST, Bundle.EMPTY).apply {
+                    val plr = endedWorkaroundPlayer!!
+                    customExtras.putBinder(
+                        "activeQueue",
+                        MultiQueueList(listOf(plr.getActiveQueue()))
+                    )
+                    customExtras.putBinder(
+                        "inactiveQueues",
+                        MultiQueueList(qb.getInactiveQueues().map { it.copy(queue = ArrayList()) })
+                    )
+                }
+                mediaSession!!.sendCustomCommand(
+                    controller,
+                    customCommand,
+                    Bundle.EMPTY
+                )
+            }
         }
 
         lastPlayedManager.save()
@@ -1461,6 +1669,10 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         } else {
             super.onTaskRemoved(rootIntent)
         }
+    }
+
+    override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+        refreshMediaButtonCustomLayout()
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1490,66 +1702,6 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         }
     }
 
-    // To avoid race conditions, the future here must be completed on session application thread
-    override fun onSetMediaItems(
-        mediaSession: MediaSession,
-        controller: MediaSession.ControllerInfo,
-        mediaItems: List<MediaItem>,
-        startIndex: Int,
-        startPositionMs: Long
-    ): ListenableFuture<MediaItemsWithStartPosition> {
-        return Util.transformFutureAsync(
-            onAddMediaItems(mediaSession, controller, mediaItems),
-            { mediaItems ->
-                val title = mediaItems.firstOrNull()?.mediaMetadata?.extras
-                    ?.getString("mq_title")
-                val list = if (title != null) mediaItems.toMutableList().apply {
-                    this[0] = this[0].buildUpon().setMediaMetadata(this[0].mediaMetadata.buildUpon()
-                        .setExtras(Bundle(this[0].mediaMetadata.extras!!).apply {
-                            // Remove mq_title extra as this is purely for transport to here
-                            remove("mq_title")
-                        }).build()).build()
-                } else mediaItems
-                val qt = title ?: getString(R.string.unknown_playlist)
-                val items = MediaItemsWithStartPosition(list, startIndex, startPositionMs)
-                val settableFuture = SettableFuture.create<MediaItemsWithStartPosition>()
-                CoroutineScope(Dispatchers.Main).launch {
-                    endedWorkaroundPlayer?.nextTitle = qt
-                    settableFuture.set(items)
-                    if (endedWorkaroundPlayer?.nextTitle != null)
-                        throw IllegalStateException("title not consumed during onSetMediaItems")
-                }
-                return@transformFutureAsync settableFuture
-            })
-    }
-
-    override fun onAddMediaItems(
-        mediaSession: MediaSession,
-        controller: MediaSession.ControllerInfo,
-        mediaItems: List<MediaItem>
-    ): ListenableFuture<List<MediaItem>> {
-        val completion = SettableFuture.create<List<MediaItem>>()
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                val result = mediaItems.flatMap {
-                    if (it.localConfiguration != null)
-                        listOf(it)
-                    else if (it.mediaId != MediaItem.DEFAULT_MEDIA_ID)
-                        gramophoneApplication.reader.songListFlow.first()
-                            .filter { m -> m.mediaId == it.mediaId }
-                    else if (it.requestMetadata.searchQuery != null)
-                        searchForMediaItem(it)
-                    else
-                        throw UnsupportedOperationException("can't do anything with $it")
-                }
-                completion.set(mapMediaItemsForFavorites(result))
-            } catch (e: UnsupportedOperationException) {
-                completion.setException(e)
-            }
-        }
-        return completion
-    }
-
     private suspend fun mapMediaItemsForFavorites(mediaItems: List<MediaItem>): List<MediaItem> {
         val favorites = gramophoneApplication.reader.playlistListFlow.map { it.find { p ->
             p is Favorite } }.first()?.songList?.map { it.mediaId } ?: emptyList()
@@ -1564,25 +1716,6 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             } else item
         }
     }
-
-    private suspend fun searchForMediaItem(item: MediaItem): List<MediaItem> {
-        val text = item.requestMetadata.searchQuery?.trim() ?: ""
-        val list = gramophoneApplication.reader.songListFlow.first()
-        // TODO support focus and sub queries (see MainActivity)
-        return if (text == "") list else list.filter {
-            // TODO sort results by match quality? (using raw=natural order)
-            // TODO this is copied directly from SearchFragment, which should probably call into
-            //  here for its search needs instead in the future
-            val isMatchingTitle =
-                it.mediaMetadata.title?.contains(text, true) == true
-            val isMatchingAlbum =
-                it.mediaMetadata.albumTitle?.contains(text, true) == true
-            val isMatchingArtist =
-                it.mediaMetadata.artist?.contains(text, true) == true
-            isMatchingTitle || isMatchingAlbum || isMatchingArtist
-        }
-    }
-
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
         refreshMediaButtonCustomLayout()
         if (needsMissingOnDestroyCallWorkarounds()) {
@@ -1600,6 +1733,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     override fun onTimelineChanged(timeline: Timeline, reason: @Player.TimelineChangeReason Int) {
         if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
             lastPlayedManager.allowSavingState = true
+            lastPlaylistLoaded.complete(Unit)
             refreshMediaButtonCustomLayout()
             if (!computeRgMode(false))
                 throw IllegalStateException("unreachable, mode failed with force=false")
@@ -1630,7 +1764,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             ) {
                 mediaSession!!.setMediaButtonPreferences(
                     it, if (isEmpty) emptyList() else
-                        ImmutableList.of(getRepeatCommand(), getShufflingCommand())
+                        ImmutableList.of(getRepeatCommand(), getShufflingCommand(), getFavoriteCommand())
                 )
             }
         }
@@ -1644,12 +1778,13 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
         pendingDownstreamFormat.removeAll { eventTime.mediaPeriodId?.periodUid == it.first }
     }
 
+    var lastKnownPeriodUid: Any? = null // TODO: file upstream bug, maybe? this seems a bit weird
     override fun onPositionDiscontinuity(
         oldPosition: Player.PositionInfo,
         newPosition: Player.PositionInfo,
         reason: Int
     ) {
-        if (oldPosition.periodUid != newPosition.periodUid) {
+        if (lastKnownPeriodUid != newPosition.periodUid || oldPosition.periodUid != newPosition.periodUid) {
             var changed = false
             downstreamFormat.toSet().forEach {
                 if (newPosition.periodUid != it.first) {
@@ -1679,8 +1814,23 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     Bundle.EMPTY
                 )
             }
+            lastKnownPeriodUid = newPosition.periodUid
         }
         scheduleSendingLyrics(false)
+    }
+
+    private fun getActiveNotificationLyric(): String? {
+        val isNotificationLyricsEnabled = prefs.getBooleanStrict("notification_lyrics", false)
+        if (!isNotificationLyricsEnabled) return null
+        if (controller?.playbackState == Player.STATE_ENDED || controller?.playbackState == Player.STATE_IDLE) return null
+
+        val cPos = (controller?.contentPosition ?: 0).toULong()
+        val lines = syncedLyrics?.text?.filter {
+            it.start <= cPos && !it.isTranslated
+        }
+        val currentLine = lines?.maxByOrNull { it.start } ?: return null
+        if (currentLine.text.isBlank()) return null
+        return currentLine.text
     }
 
     private fun scheduleSendingLyrics(new: Boolean) {
@@ -1691,8 +1841,9 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             endedWorkaroundPlayer?.updateLyricNow()
         }
         val isStatusBarLyricsEnabled = prefs.getBooleanStrict("status_bar_lyrics", false)
+        val isNotificationLyricsEnabled = prefs.getBooleanStrict("notification_lyrics", false)
         val hnw = !LyricWidgetProvider.hasWidget(this)
-        if (controller?.isPlaying != true || (!isStatusBarLyricsEnabled && hnw)) return
+        if (controller?.isPlaying != true || (!isStatusBarLyricsEnabled && !isNotificationLyricsEnabled && hnw)) return
         val cPos = (controller?.contentPosition ?: 0).toULong()
         val nextUpdate = syncedLyrics?.text?.flatMap { line ->
             if (hnw && line.start <= cPos) listOf() else if (hnw) listOf(line.start) else
@@ -1718,16 +1869,22 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                 syncedLyrics?.text?.get(it)?.text
             }
         else null
-        if (lastSentHighlightedLyric != highlightedLyric) {
+        val notificationLyric = getActiveNotificationLyric()
+        if (lastSentHighlightedLyric != highlightedLyric || lastSentNotificationLyric != notificationLyric) {
+            val notifLyricChanged = lastSentNotificationLyric != notificationLyric
             lastSentHighlightedLyric = highlightedLyric
-            mediaSession?.let {
-                handler.post {
+            lastSentNotificationLyric = notificationLyric
+            handler.post {
+                endedWorkaroundPlayer?.let {
+                    if (notifLyricChanged) {
+                        it.updateLyricNow()
+                    }
                     // This will access the media notification controller's getters. But because
                     // controller callback ordering is undefined and in practice our service
                     // controller sometimes gets called first, this would cause us to access a stale
                     // PlaybackInfo in the media notification controller which causes wrong decision
                     // for startInForegroundRequired and that leads to crash.
-                    if (Looper.myLooper() != it.player.applicationLooper)
+                    if (Looper.myLooper() != it.applicationLooper)
                         throw UnsupportedOperationException("wrong looper for triggerNotificationUpdate")
                     isManualNotificationUpdate = true
                     triggerNotificationUpdate()
@@ -1794,5 +1951,78 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                 throw IllegalStateException("onForegroundServiceStartNotAllowedException shouldn't be called on T+")
             }
         }
+    }
+
+    // --- MediaLibrarySession.Callback Implementation ---
+
+    override fun onGetLibraryRoot(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        params: LibraryParams?
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        val tabCount = params?.extras?.getInt(MediaConstants.EXTRAS_KEY_ROOT_CHILDREN_LIMIT,
+            4) ?: 4
+        return libraryTreeLoader.getLibraryRoot(tabCount)
+    }
+
+    override fun onGetChildren(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        parentId: String,
+        page: Int,
+        pageSize: Int,
+        params: LibraryParams?
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+        return libraryTreeLoader.getChildren(parentId, page, pageSize, params)
+    }
+
+    override fun onGetItem(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        mediaId: String
+    ): ListenableFuture<LibraryResult<MediaItem>> {
+        return libraryTreeLoader.getItem(mediaId)
+    }
+
+    override fun onSearch(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        query: String,
+        params: LibraryParams?
+    ): ListenableFuture<LibraryResult<Void>> {
+        session.notifySearchResultChanged(browser, query, 0, params)
+        return Futures.immediateFuture(LibraryResult.ofVoid())
+    }
+
+    override fun onGetSearchResult(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        query: String,
+        page: Int,
+        pageSize: Int,
+        params: LibraryParams?
+    ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+        return libraryTreeLoader.getSearchResult(query, page, pageSize, params)
+    }
+
+    override fun onAddMediaItems(
+        mediaSession: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        mediaItems: List<MediaItem>
+    ): ListenableFuture<List<MediaItem>> = lifecycleScope.future(Dispatchers.Default) {
+        val expanded = libraryTreeLoader.addMediaItems(mediaItems).await()
+        mapMediaItemsForFavorites(expanded.mediaItems)
+    }
+
+    override fun onSetMediaItems(
+        mediaSession: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        mediaItems: List<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = lifecycleScope.future(Dispatchers.Default) {
+        val expanded = libraryTreeLoader.addMediaItems(mediaItems).await()
+        val mapped = mapMediaItemsForFavorites(expanded.mediaItems)
+        MediaSession.MediaItemsWithStartPosition(mapped, expanded.startIndex ?: startIndex, startPositionMs)
     }
 }

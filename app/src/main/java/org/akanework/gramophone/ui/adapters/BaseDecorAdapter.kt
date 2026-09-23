@@ -40,6 +40,7 @@ import org.akanework.gramophone.logic.ui.MyRecyclerView
 import org.akanework.gramophone.logic.ui.QuickLinearSmoothScroller
 import org.akanework.gramophone.logic.utils.FilterRangeDialog
 import org.akanework.gramophone.logic.queueWithTitle
+import org.akanework.gramophone.logic.setMediaItemsWithTitle
 import org.akanework.gramophone.ui.fragments.AdapterFragment
 import org.akanework.gramophone.ui.getAdapterType
 
@@ -119,11 +120,12 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 popupMenu.menu.findItem(it.key).isVisible = adapter.canChangeLayout
             }
             popupMenu.menu.findItem(R.id.display).isVisible = adapter.canChangeLayout
-            if (adapter.sortType.value != Sorter.Type.None) {
-                sortTypeToMenuId[adapter.sortType.value]?.let { menuId ->
-                    popupMenu.menu.findItem(menuId).isChecked = true
-                }
+            val currentSort = adapter.sortType.value
+            val activeEntry = buttonMap.entries.find { it.value == currentSort || Sorter.Type.inverse(it.value) == currentSort }
+            if (activeEntry != null) {
+                popupMenu.menu.findItem(activeEntry.key).isChecked = true
             }
+
             if (adapter.canChangeLayout) {
                 when (adapter.layoutType) {
                     in layoutMap.values -> {
@@ -136,17 +138,32 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                     else -> throw IllegalStateException("Invalid layoutType ${adapter.layoutType?.name}")
                 }
             }
+
+            val reverseItem = popupMenu.menu.findItem(R.id.reverse_order)
+            val inverse = Sorter.Type.inverse(adapter.sortType.value)
+            if (inverse == null) {
+                reverseItem.isVisible = false
+            } else {
+                reverseItem.isChecked = activeEntry != null && currentSort != activeEntry.value && currentSort != Sorter.Type.None
+            }
+
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     in buttonMap.keys -> {
                         if (!menuItem.isChecked) {
-                            adapter.sort(buttonMap[menuItem.itemId]!!)
+                            val baseType = buttonMap[menuItem.itemId]!!
+                            val reverse = prefs.getBoolean("S" + getAdapterType(adapter) +
+                                    "_reverse_" + baseType, false)
+                            val targetType = if (!reverse) baseType else
+                                Sorter.Type.inverse(baseType) ?: baseType
+                            reverseItem.isChecked = reverse
+                            adapter.sort(targetType)
                             menuItem.isChecked = true
                             allowDiskAccessInStrictMode {
                                 prefs.edit {
                                     putString(
                                         "S" + getAdapterType(adapter).toString(),
-                                        buttonMap[menuItem.itemId].toString()
+                                        targetType.toString()
                                     )
                                 }
                             }
@@ -167,6 +184,25 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                                     )
                                 }
                             }
+                        }
+                        true
+                    }
+
+                    R.id.reverse_order -> {
+                        menuItem.isChecked = !menuItem.isChecked
+                        val activeId = buttonMap.entries.first {
+                            it.value == adapter.sortType.value || Sorter.Type.inverse(it.value) == adapter.sortType.value 
+                        }.key
+                        val baseType = buttonMap[activeId]!!
+                        val targetType = if (menuItem.isChecked) Sorter.Type.inverse(baseType) ?: baseType else baseType
+                        adapter.sort(targetType)
+                        prefs.edit {
+                            putBoolean("S" + getAdapterType(adapter) + "_reverse_" + baseType,
+                                menuItem.isChecked)
+                            putString(
+                                "S" + getAdapterType(adapter).toString(),
+                                targetType.toString()
+                            )
                         }
                         true
                     }
@@ -199,13 +235,11 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 val controller = adapter.getActivity().getPlayer()
                 val songList = adapter.getSongList()
                 controller?.apply {
-                    shuffleModeEnabled = false
-                    repeatMode = REPEAT_MODE_OFF
-                    setMediaItems(
-                        queueWithTitle(
-                            songList,
-                            runBlocking { adapter.queueTitle!!.first() }
-                        )
+                    setMediaItemsWithTitle(
+                        songList,
+                        title = runBlocking { adapter.queueTitle!!.first() },
+                        shuffleEnabled = false,
+                        repeatMode = REPEAT_MODE_OFF,
                     )
                     if (songList.isNotEmpty()) {
                         prepare()
@@ -216,14 +250,12 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 val list = adapter.getAlbumList()
                 val controller = adapter.getActivity().getPlayer()
                 controller?.apply {
-                    repeatMode = REPEAT_MODE_OFF
-                    shuffleModeEnabled = false
                     list.takeIf { it.isNotEmpty() }?.also { albums ->
-                        setMediaItems(
-                            queueWithTitle(
-                                albums.flatMap { it.songList },
-                                runBlocking { adapter.queueTitle.first() }
-                            )
+                        setMediaItemsWithTitle(
+                            albums.flatMap { it.songList },
+                            title = runBlocking { adapter.queueTitle.first() },
+                            shuffleEnabled = false,
+                            repeatMode = REPEAT_MODE_OFF,
                         )
                         prepare()
                         play()
@@ -237,12 +269,10 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 val songList = adapter.getSongList()
                 val controller = adapter.getActivity().getPlayer()
                 controller?.apply {
-                    shuffleModeEnabled = true
-                    setMediaItems(
-                        queueWithTitle(
-                            songList,
-                            runBlocking { adapter.queueTitle!!.first() }
-                        )
+                    setMediaItemsWithTitle(
+                        songList,
+                        title = runBlocking { adapter.queueTitle!!.first() },
+                        shuffleEnabled = true,
                     )
                     if (songList.isNotEmpty()) {
                         prepare()
@@ -253,15 +283,13 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 val list = adapter.getAlbumList()
                 val controller = adapter.getActivity().getPlayer()
                 controller?.apply {
-                    repeatMode = REPEAT_MODE_OFF
-                    shuffleModeEnabled = false
                     list.takeIf { it.isNotEmpty() }?.also { albums ->
-                        setMediaItems(
-                            queueWithTitle(
-                                albums.shuffled().flatMap { it.songList },
-                                context.getString(R.string.shuffled,
-                                    runBlocking { adapter.queueTitle.first() })
-                            )
+                        setMediaItemsWithTitle(
+                            albums.shuffled().flatMap { it.songList },
+                            title = context.getString(R.string.shuffled,
+                                    runBlocking { adapter.queueTitle.first() }),
+                            shuffleEnabled = false,
+                            repeatMode = REPEAT_MODE_OFF,
                         )
                         prepare()
                         play()

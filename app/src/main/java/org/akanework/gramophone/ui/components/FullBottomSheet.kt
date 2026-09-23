@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2023 Akane Foundation
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui.components
 
 import android.animation.ValueAnimator
@@ -37,6 +54,8 @@ import androidx.appcompat.content.res.AppCompatResources
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.appcompat.widget.TooltipCompat
 import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.animation.addListener
+import androidx.core.animation.doOnEnd
 import androidx.core.content.edit
 import androidx.core.graphics.Insets
 import androidx.core.graphics.TypefaceCompat
@@ -63,6 +82,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.preference.PreferenceManager
 import coil3.asDrawable
+import coil3.dispose
 import coil3.imageLoader
 import coil3.request.Disposable
 import coil3.request.ImageRequest
@@ -81,6 +101,7 @@ import com.google.android.material.slider.Slider
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
 import com.google.common.util.concurrent.Futures
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -249,7 +270,6 @@ class FullBottomSheet
     private val bottomSheetFullCoverFrame: MaterialCardView
     val bottomSheetFullLyricView: LyricsView by lazy { (parent as ViewGroup).findViewById(R.id.lyric_frame)!! }
     private val progressDrawable: SquigglyProgress
-    private var lastDisposable: Disposable? = null
     private var pqs: PlaylistQueueSheet? = null
 
     init {
@@ -328,12 +348,6 @@ class FullBottomSheet
             it.strokeWidth = seekBarProgressStrokeWidth
             it.transitionEnabled = true
             it.animate = false
-            it.setTint(
-                MaterialColors.getColor(
-                    bottomSheetFullSeekBar,
-                    androidx.appcompat.R.attr.colorPrimary,
-                )
-            )
         }
 
         bottomSheetFullCover.setOnClickListener {
@@ -474,9 +488,6 @@ class FullBottomSheet
             }
         }
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            bottomSheetPlaybackSpeedButton.visibility = GONE
-        }
         bottomSheetPlaybackSpeedButton.setOnClickListener {
             ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
             if (instance != null)
@@ -580,11 +591,6 @@ class FullBottomSheet
             onMediaMetadataChanged(instance?.mediaMetadata ?: MediaMetadata.EMPTY)
             firstTime = false
         }
-        bottomSheetFullCover.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
-            if (oldRight - oldLeft != right - left || oldBottom - oldTop != bottom - top) {
-                loadCoverForImageView()
-            }
-        }
     }
 
     override fun onAttachedToWindow() {
@@ -616,6 +622,7 @@ class FullBottomSheet
                 backgroundProcessedColor
             ),
         )
+        bottomSheetFullSeekBar.progressTintList = ColorStateList.valueOf(colorPrimary)
     }
 
     override fun onSaveInstanceState(): Parcelable {
@@ -1316,10 +1323,21 @@ class FullBottomSheet
                 loopTransition.start()
                 shuffleTransition.start()
                 favoriteTransition.start()
-            }
 
-            delay(max(BACKGROUND_COLOR_TRANSITION_SEC,
-                FOREGROUND_COLOR_TRANSITION_SEC))
+                // Note: Animator.addListener isn't thread-safe on all Android versions, ensure we
+                // stay on the main thread to avoid crashes.
+                surfaceTransition.awaitEnd()
+                primaryTransition.awaitEnd()
+                secondaryContainerTransition.awaitEnd()
+                onSecondaryContainerTransition.awaitEnd()
+                colorContrastFaintedTransition.awaitEnd()
+                colorOnSurfaceTransition.awaitEnd()
+                lyricTextColorTransition.awaitEnd()
+                lyricHighlightTlColorTransition.awaitEnd()
+                loopTransition.awaitEnd()
+                shuffleTransition.awaitEnd()
+                favoriteTransition.awaitEnd()
+            }
         }
 
         currentJob = null
@@ -1391,15 +1409,29 @@ class FullBottomSheet
         }
     }
 
+    private suspend fun ValueAnimator.awaitEnd() {
+        if (!isStarted)
+            return
+        val waiter = CompletableDeferred<Unit>()
+        doOnEnd {
+            waiter.complete(Unit)
+        }
+        if (!isStarted)
+            return
+        waiter.await()
+    }
+
     @SuppressLint("NotifyDataSetChanged")
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int
     ) {
         if (instance?.mediaItemCount != 0) {
-            lastDisposable?.dispose()
-            lastDisposable = null
-            loadCoverForImageView()
+            bottomSheetFullCover.dispose()
+            bottomSheetFullCover.loadNoPlaceholder(mediaItem?.mediaMetadata?.artworkUri) {
+                scale(Scale.FILL)
+                error(R.drawable.ic_default_cover)
+            }
             if (DynamicColors.isDynamicColorAvailable() &&
                 prefs.getBooleanStrict("content_based_color", true)
             ) {
@@ -1415,8 +1447,7 @@ class FullBottomSheet
             )
             updateDuration()
         } else {
-            lastDisposable?.dispose()
-            lastDisposable = null
+            bottomSheetFullCover.dispose()
         }
     }
 
@@ -1448,36 +1479,6 @@ class FullBottomSheet
                 bottomSheetFullPosition.text = position
             }
             bottomSheetFullLyricView.updateLyricPositionFromPlaybackPos()
-        }
-    }
-
-    private fun loadCoverForImageView() {
-        if (lastDisposable != null) {
-            lastDisposable?.dispose()
-            lastDisposable = null
-            Log.e(TAG, "raced while loading cover in onMediaItemTransition?")
-        }
-        val mediaItem = instance?.currentMediaItem
-        Log.d(TAG, "load cover for " + mediaItem?.mediaMetadata?.title + " considered")
-        if (bottomSheetFullCover.width != 0 && bottomSheetFullCover.height != 0) {
-            Log.d(
-                TAG,
-                "load cover for " + mediaItem?.mediaMetadata?.title + " at " + bottomSheetFullCover.width + " " + bottomSheetFullCover.height
-            )
-            lastDisposable = context.imageLoader.enqueue(
-                ImageRequest.Builder(context).apply {
-                    data(mediaItem?.mediaMetadata?.artworkUri)
-                    size(bottomSheetFullCover.width, bottomSheetFullCover.height)
-                    scale(Scale.FILL)
-                    target(onSuccess = {
-                        bottomSheetFullCover.setImageDrawable(it.asDrawable(context.resources))
-                    }, onError = {
-                        bottomSheetFullCover.setImageDrawable(it?.asDrawable(context.resources))
-                    }) // do not react to onStart() which sets placeholder
-                    error(R.drawable.ic_default_cover)
-                    allowHardware(bottomSheetFullCover.isHardwareAccelerated)
-                }.build()
-            )
         }
     }
 

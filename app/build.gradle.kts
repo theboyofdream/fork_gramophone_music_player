@@ -28,9 +28,9 @@ android {
 
     val releaseType = resolveProperties("releaseType")!!
     val appIdOverride = resolveProperties("appIdOverride")
-    val versionNameSuffixOverride = resolveProperties("versionNameSuffixOverride")
+    val vnos = resolveProperties("version" + "NameSuffixOverride")
 
-    val myVersionName = "." + (versionNameSuffixOverride ?: "git rev-parse --short=7 HEAD".runCommand(workingDir = rootDir))
+    val myVersionName = "." + (vnos ?: "git rev-parse --short=7 HEAD".runCommand(workingDir = rootDir))
     if (releaseType.contains("\"")) {
         throw IllegalArgumentException("releaseType must not contain \"")
     }
@@ -102,18 +102,14 @@ android {
 
     defaultConfig {
         applicationId = appIdOverride ?: "org.akanework.gramophone"
-        // Reasons to not support KK include me.zhanghai.android.fastscroll, WindowInsets for
-        // bottom sheet padding, ExoPlayer requiring multidex, vector drawables and poor SD support
-        // That said, supporting Android 5.0 costs tolerable amounts of tech debt, and we plan to
-        // keep support for it for a while.
-        minSdk = 21
-        targetSdk = 35
-        versionCode = 20
-        versionName = "1.0.17"
-        if (releaseType != "Release" || versionNameSuffixOverride != null) {
+        minSdk = 23
+        targetSdk = 37
+        versionCode = 24
+        versionName = "1.1.2"
+        if (releaseType != "Release" || vnos != null) {
             // by default the git commit hash is appended for non-release builds, however overrides
             // will apply unconditionally
-            versionNameSuffix = versionNameSuffixOverride ?: myVersionName
+            versionNameSuffix = vnos ?: myVersionName
         }
         buildConfigField(
             "String",
@@ -130,6 +126,11 @@ android {
             "DISABLE_MEDIA_STORE_FILTER",
             "false"
         )
+        buildConfigField(
+            "boolean",
+            "IS_GOOGLEPLAY",
+            "false"
+        )
         vectorDrawables {
             useSupportLibrary = true
         }
@@ -144,6 +145,26 @@ android {
                 "proguard-rules.pro",
             )
             signingConfig = signingConfigs.getByName("release")
+        }
+        create("googlePlayRelease") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.getByName("release2")
+            buildConfigField(
+                "boolean",
+                "IS_GOOGLEPLAY",
+                "true"
+            )
+            buildConfigField(
+                "String",
+                "RELEASE_TYPE",
+                "\"$releaseType-play\""
+            )
+            matchingFallbacks += "release"
         }
         create("benchmarkRelease") {
             isMinifyEnabled = true
@@ -280,7 +301,7 @@ aboutLibraries {
     }
     license {
         strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
-        allowedLicenses.addAll("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause")
+        allowedLicenses.addAll("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "LGPL-2.1-or-later")
     }
 }
 
@@ -305,12 +326,13 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.mediarouter:mediarouter:1.8.1")
-    implementation("io.github.nift4.mediastorecompat:mediastorecompat:1.0.0-alpha31")
+    implementation("io.github.nift4.mediastorecompat:mediastorecompat:1.0.0-alpha33")
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-common-ktx:$media3Version")
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-midi:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.11.0")
     //implementation("androidx.paging:paging-runtime-ktx:3.2.1") TODO paged, partial, flow based library loading
     //implementation("androidx.paging:paging-guava:3.2.1") TODO do we have guava? do we need this?
     implementation("androidx.preference:preference-ktx:1.2.1")
@@ -329,7 +351,7 @@ dependencies {
     // --- below does not apply to release builds ---
     debugImplementation("com.squareup.leakcanary:leakcanary-android:2.14")
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("org.robolectric:robolectric:4.17-beta-2")
     "userdebugImplementation"(kotlin("reflect", kotlinVersion)) // who thought String.invoke() is a good idea?????
     debugImplementation(kotlin("reflect", kotlinVersion))
 }

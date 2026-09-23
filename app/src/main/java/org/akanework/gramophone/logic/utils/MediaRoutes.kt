@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.logic.utils
 
 import android.annotation.SuppressLint
@@ -23,9 +40,8 @@ object MediaRoutes {
             val router = MediaRouter2.getInstance(context)
             val route = router.systemController.selectedRoutes.firstOrNull()
             route?.getAudioDeviceForRoute(context)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        } else
             MediaRouter.getInstance(context).selectedRoute.getAudioDeviceForRoute(context)
-        } else null
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
@@ -274,7 +290,6 @@ object MediaRoutes {
     // Approximation of audio device based on best effort
     // Inspired by https://github.com/timschneeb/RootlessJamesDSP/blob/593c0dc/app/src/main/java/me/timschneeberger/rootlessjamesdsp/utils/RoutingObserver.kt
     @SuppressLint("DiscouragedApi")
-    @RequiresApi(Build.VERSION_CODES.M)
     fun MediaRouter.RouteInfo.getAudioDeviceForRoute(context: Context): AudioDeviceInfo? {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
             throw IllegalStateException("getAudioDeviceForRoute must not be called on R+")
@@ -371,7 +386,6 @@ object MediaRoutes {
         return null
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     private fun AudioManager.firstOutputDeviceByType(
         vararg type: Int,
         name: CharSequence? = null,
@@ -455,7 +469,6 @@ object MediaRoutes {
         return devicesByType[0]
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     private fun AudioDeviceInfo.cleanUpProductName(): String = productName.let {
         if (it.startsWith("USB-Audio - "))
             it.substring("USB-Audio - ".length)

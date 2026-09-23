@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package uk.akane.libphonograph.manipulator
 
 import android.content.ContentResolver
@@ -75,6 +92,10 @@ object PlaylistSerializer {
     }
 
     private fun read(format: PlaylistFormat, outFile: File): Playlist {
+        outFile.length().let {
+            if (it >= 5L * 1024L * 1024L)
+                throw IllegalArgumentException("The playlist file is too big: ${it / (1024L * 1024L)}MB")
+        }
         return when (format) {
             PlaylistFormat.M3u -> {
                 val extInfRegex = Regex("#EXTINF:(-?\\d+)(?:\\s+([^,]+))?,(.*)")
@@ -107,7 +128,7 @@ object PlaylistSerializer {
                         }
                         val uriLine = Uri.decode(it)
                         val link = listOf(Entry.parseUri(outFile, uriLine))
-                        val durationSeconds = extInfMatch?.groupValues?.get(1)?.toLong()
+                        val durationSeconds = extInfMatch?.groupValues?.get(1)?.toLongOrNull()
                         val tvKeys = extInfMatch?.groupValues?.get(2)?.let {
                             tvKeysRegex.findAll(it).map { match ->
                                 val key = match.groupValues[1]

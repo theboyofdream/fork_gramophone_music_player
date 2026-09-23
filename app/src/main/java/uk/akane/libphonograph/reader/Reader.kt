@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2023 The Gramophone authors
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package uk.akane.libphonograph.reader
 
 import android.content.ContentResolver
@@ -17,15 +34,18 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.Log
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import org.akanework.gramophone.logic.GramophoneAlbumArtProvider
+import org.akanework.gramophone.logic.getFile
 import org.akanework.gramophone.logic.hasAudioPermission
 import org.akanework.gramophone.logic.hasImagePermission
 import org.akanework.gramophone.logic.hasImprovedMediaStore
 import org.akanework.gramophone.logic.hasScopedStorageV1
 import org.akanework.gramophone.logic.hasScopedStorageWithMediaTypes
+import org.akanework.gramophone.logic.requireMediaStoreId
+import org.akanework.gramophone.logic.utils.Flags
 import org.nift4.mediastorecompat.MediaStoreCompat
 import org.nift4.mediastorecompat.StorageManagerCompat
 import org.nift4.mediastorecompat.StorageVolumeCompat
-import uk.akane.libphonograph.Constants
 import uk.akane.libphonograph.getColumnIndexOrNull
 import uk.akane.libphonograph.getIntOrNullIfThrow
 import uk.akane.libphonograph.getLongOrNullIfThrow
@@ -35,10 +55,10 @@ import uk.akane.libphonograph.items.Artist
 import uk.akane.libphonograph.items.Date
 import uk.akane.libphonograph.items.EXTRA_ADD_DATE
 import uk.akane.libphonograph.items.EXTRA_ALBUM_ID
-import uk.akane.libphonograph.items.EXTRA_ALBUM_YEAR
 import uk.akane.libphonograph.items.EXTRA_ARTIST_ID
-import uk.akane.libphonograph.items.EXTRA_AUTHOR
 import uk.akane.libphonograph.items.EXTRA_CD_TRACK_NUMBER
+import uk.akane.libphonograph.items.EXTRA_FILE
+import uk.akane.libphonograph.items.EXTRA_HD_ARTWORK_URI
 import uk.akane.libphonograph.items.EXTRA_MODIFIED_DATE
 import uk.akane.libphonograph.items.FileNode
 import uk.akane.libphonograph.items.Genre
@@ -50,7 +70,6 @@ import uk.akane.libphonograph.putIfAbsentSupport
 import uk.akane.libphonograph.toUriCompat
 import uk.akane.libphonograph.utils.MiscUtils
 import uk.akane.libphonograph.utils.MiscUtils.findBestAlbumArtist
-import uk.akane.libphonograph.utils.MiscUtils.findBestCover
 import uk.akane.libphonograph.utils.MiscUtils.handleMediaFolder
 import uk.akane.libphonograph.utils.MiscUtils.handleShallowMediaItem
 import java.io.File
@@ -132,8 +151,7 @@ internal object Reader {
         shouldLoadFolders: Boolean = true,
         shouldLoadFilesystem: Boolean = true,
         shouldLoadIdMap: Boolean = true,
-        shouldLoadPathMap: Boolean = true,
-        coverStubUri: String? = null
+        shouldLoadPathMap: Boolean = true
     ): ReaderResult {
         if (!shouldLoadFilesystem && shouldUseEnhancedCoverReading != false) {
             throw IllegalArgumentException("Enhanced cover loading requires loading filesystem")
@@ -160,7 +178,8 @@ internal object Reader {
                 }
         }
         val useEnhancedCoverReading =
-            if (hasScopedStorageWithMediaTypes() && !context.hasImagePermission()) {
+            if (hasScopedStorageWithMediaTypes() && (Flags.REMOVE_IMAGE_PERMISSION ||
+                        !context.hasImagePermission())) {
                 if (shouldUseEnhancedCoverReading == true)
                     throw SecurityException("Requested enhanced cover reading but permission isn't granted")
                 false
@@ -252,16 +271,16 @@ internal object Reader {
             val modifiedDateColumn = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
 
             while (it.moveToNext()) {
-                val path = it.getStringOrNullIfThrow(pathColumn)
+                val path = it.getString(pathColumn)!!
                 val duration =
                     it.getLongOrNullIfThrow(durationColumn)?.let { if (it >= 0) it else null }
-                val pathFile = path?.let { it1 -> File(it1) }
-                val parent = pathFile?.parentFile?.takeIf { it.absolutePath != "/" }
+                val pathFile = File(path)
+                val parent = pathFile.parentFile?.takeIf { it.absolutePath != "/" }
                 val fldPath = parent?.absolutePath
                 var isBlacklisted = false
                 if (whiteListSet.isNotEmpty()) {
                     isBlacklisted = true
-                    var f = pathFile
+                    var f: File? = pathFile
                     while (f != null) {
                         if (whiteListSet.contains(f.absolutePath)) {
                             isBlacklisted = false
@@ -271,7 +290,7 @@ internal object Reader {
                     }
                 }
                 if (!isBlacklisted && blackListSet.isNotEmpty()) {
-                    var f = pathFile
+                    var f: File? = pathFile
                     while (f != null) {
                         if (blackListSet.contains(f.absolutePath)) {
                             isBlacklisted = true
@@ -303,8 +322,7 @@ internal object Reader {
                     }
                 }
                 val skip = (duration != null && duration != 0L &&
-                        duration < minSongLengthSeconds * 1000) || (fldPath == null
-                        || isBlacklisted)
+                        duration < minSongLengthSeconds * 1000) || fldPath == null || isBlacklisted
                 // We need to add blacklisted songs to idMap as they can be referenced by playlist
                 if (skip && idMap == null && pathMap == null) continue
                 val id = it.getLong(idColumn)
@@ -347,8 +365,7 @@ internal object Reader {
                 val dateTakenDay = if (hasImprovedMediaStore()) {
                     dateTakenParsed?.dayOfMonth
                 } else null
-                val imgUri = Uri.Builder().scheme("gramophoneSongCover")
-                    .authority(id.toString()).path(path).build()
+                val imgUri = GramophoneAlbumArtProvider.buildSongUri(id, pathFile)
                 if (cdTrackNumber != null && trackNumber == null) {
                     cdTrackNumber.toIntOrNull()?.let {
                         trackNumber = it
@@ -362,7 +379,7 @@ internal object Reader {
                 //   extension)
                 // - there is valid track metadata, and the title doesn't begin with that number
                 // we can assume this is referring to the track number.
-                if (trackNumber == null && pathFile != null) {
+                if (trackNumber == null) {
                     val match = trackNumberRegex.matchEntire(pathFile.name)
                     if (match != null && match.groups.size > 1
                         && (hasNoMetadata || !title.startsWith(match.groups[1]!!.value))
@@ -383,7 +400,8 @@ internal object Reader {
 
                 // Build our mediaItem.
                 val song = MediaItem.Builder()
-                    .setUri(pathFile?.toUriCompat())
+                    .setUri(ContentUris.withAppendedId(
+                        MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id))
                     .setMediaId("MediaStore:$id")
                     .setMimeType(mimeType)
                     .setMediaMetadata(
@@ -395,6 +413,7 @@ internal object Reader {
                             .setDurationMs(duration)
                             .setTitle(title)
                             .setWriter(writer)
+                            .setAuthor(author)
                             .setCompilation(compilation)
                             .setComposer(composer)
                             .setArtist(artist)
@@ -416,12 +435,6 @@ internal object Reader {
                                 if (albumId != null) {
                                     putLong(EXTRA_ALBUM_ID, albumId)
                                 }
-                                // EXTRA_ALBUM_YEAR assigned below
-                                // TODO: is albumYear truly a good property of a song? it creates
-                                //  a cyclic dependency between albums derived from songs, and song
-                                //  metadata derived from album. maybe users of this should just
-                                //  query the album list instead and fetch album year from there.
-                                putString(EXTRA_AUTHOR, author)
                                 if (addDate != null) {
                                     putLong(EXTRA_ADD_DATE, addDate)
                                 }
@@ -429,13 +442,15 @@ internal object Reader {
                                     putLong(EXTRA_MODIFIED_DATE, modifiedDate)
                                 }
                                 putString(EXTRA_CD_TRACK_NUMBER, cdTrackNumber)
+                                putParcelable(EXTRA_HD_ARTWORK_URI, imgUri.buildUpon()
+                                    .appendQueryParameter("hd", "1").build())
+                                putString(EXTRA_FILE, path)
                             })
                             .build(),
                     ).build()
                 // Build our metadata maps/lists.
                 idMap?.put(id, song)
-                if (path != null)
-                    pathMap?.put(path, song)
+                pathMap?.put(path, song)
                 // Now that the song can be found by playlists, do NOT register other metadata.
                 if (skip) continue
                 songs.add(song)
@@ -444,15 +459,13 @@ internal object Reader {
                 }?.songList as MutableList?)?.add(song)
                 artistCacheMap?.putIfAbsentSupport(artist, artistId)
                 albumMap?.getOrPut(albumId) {
-                    // in enhanced cover loading case, cover uri is created later using coverCache
-                    val cover = if (coverCache != null || albumId == null) null else
-                        ContentUris.withAppendedId(Constants.baseAlbumCoverUri, albumId)
+                    // in enhanced cover loading case, cover uri is changed later using coverCache
                     MiscUtils.AlbumImpl(
                         albumId,
                         album,
                         null,
                         null,
-                        cover,
+                        imgUri, // default to first song cover
                         null,
                         null,
                         null,
@@ -505,13 +518,6 @@ internal object Reader {
             it.albumArtistId = artistFound?.second ?: artistCacheMap?.get(it.albumArtist)
                     ?: "nonMediaStoreArtist:${it.albumArtist}".hashCode().toLong()
             it.albumYear = it.songList.mapNotNull { it.mediaMetadata.releaseYear }.maxOrNull()
-            if (it.albumYear != null)
-                it.songList.forEach { item ->
-                    item.mediaMetadata.extras!!.putLong(
-                        EXTRA_ALBUM_YEAR,
-                        it.albumYear!!.toLong()
-                    )
-                }
             it.albumAddDate = it.songList.mapNotNull { it.mediaMetadata.addDate }.minOrNull()
             it.albumModifiedDate =
                 it.songList.mapNotNull { it.mediaMetadata.modifiedDate }.maxOrNull()
@@ -525,11 +531,9 @@ internal object Reader {
             coverCache?.get(it.id)?.let { p ->
                 // if this is false, folder contains >1 albums
                 if (p.second.albumId == it.id) {
-                    if (coverStubUri != null)
-                        it.cover = Uri.Builder().scheme(coverStubUri)
-                            .authority(it.id.toString()).path(p.first.absolutePath).build()
-                    else
-                        findBestCover(p.first)?.let { f -> it.cover = f.toUriCompat() }
+                    it.cover = GramophoneAlbumArtProvider.buildAlbumUri(p.second
+                        .songList.first().requireMediaStoreId(), p.second
+                        .songList.first().getFile()!!)
                 }
             }
         }?.toList<Album>()

@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.nift4.gramophone.hificore
 
 import androidx.media3.common.util.Log
@@ -6,8 +23,23 @@ import java.nio.ByteBuffer
 class AdaptiveDynamicRangeCompression {
     companion object {
         private const val TAG = "AdaptiveDRCSw"
+        @JvmStatic
         var libLoaded = false
             private set
+        init {
+            if (!AudioTrackHiddenApi.libLoaded) {
+                try {
+                    Log.d(TAG, "Loading libhificore.so")
+                    System.loadLibrary("hificore")
+                    Log.d(TAG, "Done loading libhificore.so")
+                } catch (e: Throwable) {
+                    throw IllegalStateException("can't load lib for AdaptiveDRC", e)
+                }
+            }
+            // don't set the hidden api one to true, .so is shared for simplicity but hidden api
+            // may not wish or be allowed to load/use the library.
+            libLoaded = true
+        }
     }
 
     private var ptr: Long
@@ -18,18 +50,6 @@ class AdaptiveDynamicRangeCompression {
     private var compressionRatio: Float? = null
 
     init {
-        if (!AudioTrackHiddenApi.libLoaded) {
-            try {
-                Log.d(TAG, "Loading libhificore.so")
-                System.loadLibrary("hificore")
-                Log.d(TAG, "Done loading libhificore.so")
-            } catch (e: Throwable) {
-                throw IllegalStateException("can't load lib for AdaptiveDRC", e)
-            }
-        }
-        // don't set the hidden api one to true, .so is shared for simplicity but hidden api
-        // may not wish or be allowed to load/use the library.
-        libLoaded = true
         try {
             ptr = create()
         } catch (e: Throwable) {

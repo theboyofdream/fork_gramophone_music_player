@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.nift4.gramophone.hificore
 
 import android.annotation.SuppressLint
@@ -153,8 +170,6 @@ object AudioSystemHiddenApi {
 
     @SuppressLint("PrivateApi") // sorry, not sorry...
     private fun listAudioPorts(): Pair<List<Any>, Int>? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
-            return null // while listAudioPorts exists in L, it just returns an error
         val ports = ArrayList<Any?>()
         val generation = IntArray(1)
         try {
@@ -237,8 +252,6 @@ object AudioSystemHiddenApi {
     private fun getMixPortMetadata(id: Int, io: Int): IntArray? {
         if (!libLoaded)
             return null
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
-            return null // need listAudioPorts or getAudioPort
         return try {
             Log.d(TRACE_TAG, "calling native findAfFlagsForPortInternal")
             val result = findAfFlagsForPortInternal(id, io)

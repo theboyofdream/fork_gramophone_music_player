@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui.components
 
 import android.content.Context
@@ -29,7 +46,7 @@ class TabOrderPreference(context: Context, attrs: AttributeSet) : DialogPreferen
             persistString(new)
         }
 
-    override fun onGetDefaultValue(a: TypedArray, index: Int): Any? {
+    override fun onGetDefaultValue(a: TypedArray, index: Int): Any {
         return a.getString(index) ?: ""
     }
 
@@ -41,7 +58,7 @@ class TabOrderPreference(context: Context, attrs: AttributeSet) : DialogPreferen
         return R.layout.tab_order_dialog
     }
 
-    class TabOrderDialog() : PreferenceDialogFragmentCompat() {
+    class TabOrderDialog : PreferenceDialogFragmentCompat() {
         private val adapter by lazy { TabOrderAdapter((preference as TabOrderPreference).value) }
 
         override fun onBindDialogView(view: View) {

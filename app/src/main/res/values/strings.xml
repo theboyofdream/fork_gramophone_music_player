@@ -153,6 +153,8 @@
     <string name="folders">Folders</string>
     <!-- Color theme in appearance settings: light/dark/follow system -->
     <string name="settings_app_theme">App theme</string>
+    <!-- Switch that reverses the order of the selected sort mode -->
+    <string name="reverse_order">Reverse order</string>
     <!-- The sort mode if something has inherent proper order (playlist order for playlist, CD order
     for album, etc) -->
     <string name="natural_order">Natural order</string>
@@ -398,8 +400,16 @@
     <string name="settings_status_bar_lyrics_title">Status bar lyrics</string>
     <!-- Settings toggle to enable showing lyrics in status bar (requires meizu phone). Subtext -->
     <string name="settings_status_bar_lyrics_summary">Enable MeiZu method of displaying lyrics in status bar (only available on some devices)</string>
+    <!-- Settings toggle to enable showing lyrics in media notification. Title -->
+    <string name="settings_notification_lyrics_title">Notification lyrics</string>
+    <!-- Settings toggle to enable showing lyrics in media notification. Subtext -->
+    <string name="settings_notification_lyrics_summary">Display lyrics as the notification title and artist - title as subtitle</string>
     <!-- Description shown about lyric widget in Android launcher / home screen's widget selector on Android 12+ -->
     <string name="lyric_widget_description">Widget that shows lyrics of currently playing media</string>
+    <!-- Settings toggle in behavior settings to always skip to previous track on previous button press. Title -->
+    <string name="settings_always_skip_previous">Always skip to previous track</string>
+    <!-- Settings toggle in behavior settings to always skip to previous track on previous button press. Subtext -->
+    <string name="settings_always_skip_previous_summary">Directly switch to previous track when pressing previous button instead of seeking to start</string>
     <!-- Context menu item to delete song/album/playlist -->
     <string name="delete">Delete</string>
     <!-- Dialog text to confirm user wants to delete a specific song or playlist with user defined name -->
@@ -724,7 +734,7 @@
     <!-- Positive action button in crash report screen -->
     <string name="send_email">Send email</string>
     <!-- Error message if sending crash report failed -->
-    <string name="send_email_manually">Please send log to nift4dev@gmail.com - can\'t find mail app</string>
+    <string name="send_email_manually">Please send log to nift4@posteo.net - can\'t find mail app</string>
     <!-- Error message if lyrics were found but are corrupted or in unsupported format -->
     <string name="failed_to_parse_lyric">Failed to parse lyrics</string>
     <!-- Title of dialog which shows playback path (formats, sample rates, devices, changes in those). -->
@@ -1086,6 +1096,8 @@
     <string name="contributors_yuyuko1024">Squiggly progress bar</string>
     <!-- Shown below a contributor's nickname in about screen. This is the feature they worked on -->
     <string name="contributors_ghhccghk">Status Bar lyrics &amp; other improvements</string>
+    <!-- Shown below a contributor's nickname in about screen. This is the feature they worked on -->
+    <string name="contributors_banksio">Android Auto</string>
     <!-- Shown below a contributor's nickname in about screen -->
     <string name="contributors_saladnoober">Quality Assurance</string>
     <!-- Home menu item to refresh song list quickly -->
@@ -1114,7 +1126,7 @@
     <!-- Player UI toggle to enable animated shape similar to a cookie for album cover. Title -->
     <string name="settings_cookie_info">Cookie cover</string>
     <!-- Appearance toggle to replace gray color with black in app UI. Title -->
-    <string name="settings_pure_dark">Pure dark theme</string>
+    <string name="settings_pure_dark">Pure black in dark theme</string>
     <!-- Appearance toggle to replace gray color with black in app UI. Subtext -->
     <string name="settings_pure_dark_summary">A theme where all surfaces in the app are pure black (may cause black crush on OLED displays)</string>
     <!-- Behavior toggle to stop playing music when closing the app in "Recent apps" of Android system. Title -->
@@ -1198,8 +1210,10 @@
     <string name="actions_query_start_random_songs">start random songs</string>
     <!-- Google Assistant / voice assistant phrase with song name placeholder -->
     <string name="actions_query_shuffle_specific">shuffle $item_name</string>
-    <!-- Tooltip for heart button -->
+    <!-- Tooltip for heart button, meaning to add a song to the favorites list -->
     <string name="favorite">Favorite</string>
+    <!-- Tooltip for heart button, meaning to remove a song from the favorites list -->
+    <string name="unfavorite">Unfavorite</string>
     <!-- Error notification when user tries to change favourite status of song while the app is in
     background but we must ask for permission to write the special playlist file. Title -->
     <string name="favorite_failed_title">Failed to change favourite state of song</string>
@@ -1295,4 +1309,7 @@ supporting local search. This string is displayed in the search bar when using G
     <!-- Pin this queue so it does not get automatically removed after some period of time -->
     <string name="mq_pin_queue">Pin queue</string>
     <string name="shuffled">%s (shuffled)</string>
+    <string name="loading_playlists">Loading playlists...</string>
+    <!-- Option to enable reordering mode for items in a list -->
+    <string name="edit_mode">Enter edit mode</string>
 </resources>

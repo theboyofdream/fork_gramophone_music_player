@@ -283,7 +283,7 @@
     <string name="settings_contributors_click">%s (feu clic per a més!)</string>
     <string name="oh_no">Oh, no!</string>
     <string name="send_email">Envia un correu electrònic</string>
-    <string name="send_email_manually">Envieu un correu electrònic a nift4dev@gmail.com, no s\'ha pogut trobar cap aplicació de correu</string>
+    <string name="send_email_manually">Envieu el registre a nift4@posteo.net, no s\'ha pogut trobar cap aplicació de correu</string>
     <string name="failed_to_parse_lyric">Ha fallat en analitzar la lletra</string>
     <string name="audio_not_initialized">El sistema de reproducció d\'àudio no està inicialitzat. Intenteu reproduir alguna cosa!</string>
     <string name="audio_signal_chain">Cadena del senyal d\'àudio</string>
@@ -436,7 +436,7 @@
     </plurals>
     <string name="settings_cookie_summary">Fa que la caràtula d\'àlbum tingui forma de galeta</string>
     <string name="settings_cookie_info">Caràtula en forma de galeta</string>
-    <string name="settings_pure_dark">Tema fosc pur</string>
+    <string name="settings_pure_dark">Negre pur al tema fosc</string>
     <string name="settings_pure_dark_summary">Un tema a on totes les superfícies de l\'aplicació són negres pures (pot provocar un trencament del negre a les pantalles OLED)</string>
     <string name="settings_stop_on_dismiss">Atura en descartar</string>
     <string name="settings_stop_on_dismiss_summary">Atura la reproducció quan la tasca de l\'aplicació es descarti de les recents</string>
@@ -521,4 +521,16 @@
     <string name="set">Assigna</string>
     <string name="search_query">Cerca: %s</string>
     <string name="settings_mq_enabled">Cues múltiples</string>
+    <string name="mq_unpin_queue">Treu la fixació de la cua</string>
+    <string name="mq_pin_queue">Fixa la cua</string>
+    <string name="shuffled">%s (barrejat)</string>
+    <string name="loading_playlists">S\'estan carregant les llistes de reproducció...</string>
+    <string name="contributors_banksio">Android Auto</string>
+    <string name="unfavorite">Elimina de les preferides</string>
+    <string name="edit_mode">Entra en el mode d\'edició</string>
+    <string name="settings_notification_lyrics_title">Lletra a la notificació</string>
+    <string name="settings_notification_lyrics_summary">Mostra la lletra com a títol de notificació i artista - títol com a subtítol</string>
+    <string name="settings_always_skip_previous">Salta sempre a la pista anterior</string>
+    <string name="settings_always_skip_previous_summary">Canvia directament a la pista anterior en prémer el botó anterior en lloc d\'anar a l\'inici</string>
+    <string name="reverse_order">Ordre invers</string>
 </resources>

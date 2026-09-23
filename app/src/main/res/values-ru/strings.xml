@@ -87,8 +87,7 @@
     <string name="settings_default_progress_bar">Полоса прогресса по умолчанию</string>
     <string name="check_for_updates">Следите за обновлениями в нашем канале!</string>
     <string name="settings_content_based_color_summary">Включает генерацию цветов на основе обложки альбома</string>
-    <string name="opensource_info">С открытым исходным кодом под лицензией GPL-3.0
-\nАвторские права %s</string>
+    <string name="opensource_info">С открытым исходным кодом под лицензией GPL-3.0 \nАвторские права %s</string>
     <string name="playlist_favourite">Избранные</string>
     <string name="now_playing">Сейчас играет</string>
     <string name="settings_default_progress_bar_summary">Включает полосу прогресса в стиле Material</string>
@@ -373,7 +372,7 @@
     <string name="settings_trim_lyrics_summary">Иногда пробелы в начале или в конце строки — это художественный приём автора. Но если вам это не нравится, просто включите эту опцию, и лишние пробелы будут удаляться автоматически.</string>
     <string name="settings_lyrics_no_animation">Отключить анимации</string>
     <string name="gramophone_crashed_explainer2">В работе Gramophone произошёл сбой :(\n\nПожалуйста, отправьте отчёт об ошибке, чтобы неполадки, подобные тем, что привели к этому сбою, можно было исправить!\n\nКаждая ситуация уникальна, словно музыка, и без вашей помощи, весьма вероятно, эта ошибка <b>НЕ</b> будет устранена!</string>
-    <string name="send_email_manually">Пожалуйста отправьте лог файл по адресу nift4dev@gmail.com - не могу найти почтовую программу</string>
+    <string name="send_email_manually">Пожалуйста отправьте лог файл по адресу nift4@posteo.net - не могу найти почтовую программу</string>
     <string name="spk_encoding_iec61937">IEC 61937</string>
     <string name="spk_encoding_aptx">aptX</string>
     <string name="mix_port_flag_deep_buffer">Глубокий буффер</string>
@@ -450,7 +449,7 @@
     <string name="settings_cookie_info">Обложка-печенье</string>
     <string name="compact_grid">Сетка (компактная)</string>
     <string name="sort_by_album_year">Год альбома</string>
-    <string name="sort_by_album_artist_year"><![CDATA[Исполнитель альбома -> Год]]></string>
+    <string name="sort_by_album_artist_year"><![CDATA[Исполнитель альбома -&gt; Год]]></string>
     <string name="forbidden_symbol_error">Недопустимый символ в названии</string>
     <string name="translators">Переводчики</string>
     <string name="settings_replaygain_drc_desc">Использовать \"Компрессию динамического диапазона\" для защиты от клиппинга (рекомендуется). Если отключено, громкость будет просто понижена (из-за чего она не будет оставаться на одном уровне, что сведёт на нет эффект нормализации).</string>
@@ -517,7 +516,7 @@
     <string name="another_with_name">Это имя уже используется</string>
     <string name="search_query">Поиск: %s</string>
     <string name="settings_font_size">Размер шрифта</string>
-    <string name="set">Готово</string>
+    <string name="set">Поставить</string>
     <string name="timer_eos">Дождаться окончания трека</string>
     <string name="timer_end_of_this_song">В конце текущего трека</string>
     <string name="other">Своё время</string>
@@ -530,4 +529,16 @@
         <item quantity="many">%d минут</item>
         <item quantity="other">%d минут</item>
     </plurals>
+    <string name="mq_unpin_queue">Открепить очередь</string>
+    <string name="mq_pin_queue">Закрепить очередь</string>
+    <string name="shuffled">%s (вперемешку)</string>
+    <string name="loading_playlists">Загрузка плейлистов…</string>
+    <string name="contributors_banksio">Android Auto</string>
+    <string name="unfavorite">Удалить из избранного</string>
+    <string name="edit_mode">Изменить порядок</string>
+    <string name="settings_notification_lyrics_title">Текст песни в уведомлении</string>
+    <string name="settings_notification_lyrics_summary">Отображать текст песни в заголовке уведомления, а «Исполнитель - Название» в подзаголовке</string>
+    <string name="settings_always_skip_previous">Всегда переключать на предыдущий трек</string>
+    <string name="settings_always_skip_previous_summary">Мгновенное переключение на предыдущий трек вместо перемотки в начало при нажатии кнопки «Назад»</string>
+    <string name="reverse_order">Инвертировать порядок</string>
 </resources>

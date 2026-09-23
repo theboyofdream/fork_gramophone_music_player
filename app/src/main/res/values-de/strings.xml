@@ -273,7 +273,6 @@
     <string name="settings_open_source_licenses">Open Source Lizensen</string>
     <string name="oh_no">Oh nein!</string>
     <string name="send_email">E-Mail senden</string>
-    <string name="send_email_manually">Bitte schick das Protokoll an nift4dev@gmail.com - E-Mail-App wurde nicht gefunden</string>
     <string name="spk_channel_out_top_front_right">Oben Vorne Rechts</string>
     <string name="device_type_ble_broadcast">Bluetooth LE Broadcast</string>
     <string name="spk_channel_out_bottom_front_center">Unten Vorne Center</string>
@@ -430,7 +429,7 @@
     <string name="spk_encoding_pcm_20bit_big_endian">20-bit PCM (big endian)</string>
     <string name="compact_grid">Raster (kompakt)</string>
     <string name="sort_by_album_year">Albumjahr</string>
-    <string name="sort_by_album_artist_year"><![CDATA[Albuminterpret -> Jahr]]></string>
+    <string name="sort_by_album_artist_year"><![CDATA[Albuminterpret -&gt; Jahr]]></string>
     <string name="d_db">%d dB</string>
     <string name="playback_speed">Wiedergabegeschwindigkeit</string>
     <string name="tempo">Tempo</string>
@@ -492,6 +491,7 @@
     <string name="settings_replaygain_no_rg_amp_desc">Lautstärke bei lauten Songs ohne ReplayGain-Tags reduzieren</string>
     <string name="sort_by_artist_year"><![CDATA[Interpret -&gt; Jahr]]></string>
     <string name="settings_mq_enabled">Mehrere Warteschlangen</string>
-    <string name="settings_pure_dark">Schwarzes Farbschema</string>
     <string name="settings_replaygain_drc_desc">Kompressor benutzen, um Übersteuerung zu vermeiden (empfohlen). Ist diese Funktion deaktiviert, wird stattdessen die Lautstärke reduziert, was den Normalisierungseffekt zunichtemacht.</string>
+    <string name="contributors_banksio">Android Auto</string>
+    <string name="search_query">Suchen: %s</string>
 </resources>

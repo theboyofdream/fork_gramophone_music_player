@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2024 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.logic.utils
 
 import android.os.Parcel
@@ -96,7 +113,7 @@ private sealed class SyntacticLrc {
     data class Metadata(val name: String, val value: String) : SyntacticLrc()
     data class LyricText(val text: String) : SyntacticLrc()
     data class InvalidText(val text: String) : SyntacticLrc()
-    open class NewLine() : SyntacticLrc() {
+    open class NewLine : SyntacticLrc() {
         class SyntheticNewLine : NewLine()
     }
 
@@ -1385,7 +1402,11 @@ fun parseTtml(audioMimeType: String?, lyricText: String): SemanticLyrics? {
     var hasItunesNamespace = timing != null
     if (!hasItunesNamespace) {
         for (i in 0..<parser.getNamespaceCount(parser.depth)) {
-            if (parser.getNamespaceUri(i) == itunes || parser.getNamespaceUri(i) == itunesInternal) {
+            if (parser.getNamespaceUri(i) == itunes ||
+                parser.getNamespaceUri(i) == itunesInternal ||
+                // this namespace originates from a slop lyric generator where AI hallucinated the
+                // namespace. why do i even support parsing this :sob:
+                parser.getNamespaceUri(i) == "http://music.apple.com/lyrics") {
                 hasItunesNamespace = true
                 break
             }
@@ -1393,6 +1414,7 @@ fun parseTtml(audioMimeType: String?, lyricText: String): SemanticLyrics? {
     }
     val peopleToType = hashMapOf<String, String>()
     val people = hashMapOf<String, MutableList<String>>()
+    val itunesTransliterations = hashMapOf<String, HashMap<String, out List<Pair<String?, String>>>>()
     val itunesTranslations = hashMapOf<String, HashMap<String, out List<Pair<String?, String>>>>()
     val timer = TtmlTimeTracker(parser, hasItunesNamespace)
     parser.nextTag()
@@ -1477,12 +1499,14 @@ fun parseTtml(audioMimeType: String?, lyricText: String): SemanticLyrics? {
                                     parser.nextAndThrowIfNotEnd()
                                 }
 
-                                "translations" -> {
+                                "translations", "transliterations" -> {
                                     while (parser.nextTag() != XmlPullParser.END_TAG) {
-                                        if (parser.name == "translation") {
-                                            val type = parser.getAttributeValue(null, "type")
-                                            if (type != "subtitle") {
-                                                throw XmlPullParserException("unsupported translation type $type")
+                                        if (parser.name == "translation" || parser.name == "transliteration") {
+                                            if (parser.name == "translation") {
+                                                val type = parser.getAttributeValue(null, "type")
+                                                if (type != "subtitle") {
+                                                    throw XmlPullParserException("unsupported translation type $type")
+                                                }
                                             }
                                             val lang = parser.getAttributeValue(
                                                 "http://www.w3.org/XML/1998/namespace",
@@ -1538,7 +1562,12 @@ fun parseTtml(audioMimeType: String?, lyricText: String): SemanticLyrics? {
                                                     )
                                                 }
                                             }
-                                            itunesTranslations[lang] = out
+                                            if (parser.name == "translation") {
+                                                itunesTranslations[lang] = out
+                                            } else if (parser.name == "transliteration") {
+                                                itunesTransliterations[lang] = out
+                                            } else
+                                                throw IllegalStateException()
                                         } else {
                                             throw XmlPullParserException(
                                                 "expected <translation>, got " +
@@ -1615,7 +1644,7 @@ fun parseTtml(audioMimeType: String?, lyricText: String): SemanticLyrics? {
         } while (cur != -1)
         out
     }.toMutableList()
-    itunesTranslations.forEach { lang ->
+    (itunesTransliterations.entries.toList() + itunesTranslations.entries.toList()).forEach { lang ->
         lang.value.forEach { line ->
             val indices = paragraphs.flatMapIndexed { i, it -> if (it.key == line.key)
                 listOf(i) else emptyList() }

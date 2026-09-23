@@ -25,10 +25,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.app.ShareCompat
-import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -45,7 +43,6 @@ import org.akanework.gramophone.logic.getBooleanStrict
 import org.akanework.gramophone.logic.getFile
 import org.akanework.gramophone.logic.gramophoneApplication
 import org.akanework.gramophone.logic.requireMediaStoreId
-import org.akanework.gramophone.logic.queueWithTitle
 import org.akanework.gramophone.logic.setMediaItemsSeamlessly
 import org.akanework.gramophone.logic.ui.MyRecyclerView
 import org.akanework.gramophone.ui.MediaControllerViewModel
@@ -54,9 +51,9 @@ import org.akanework.gramophone.ui.components.NowPlayingDrawable
 import org.akanework.gramophone.ui.fragments.ArtistSubFragment
 import org.akanework.gramophone.ui.fragments.DetailDialogFragment
 import org.akanework.gramophone.ui.fragments.GeneralSubFragment
+import org.akanework.gramophone.ui.fragments.SearchFragment
 import uk.akane.libphonograph.items.addDate
 import uk.akane.libphonograph.items.albumId
-import uk.akane.libphonograph.items.albumYear
 import uk.akane.libphonograph.items.artistId
 import uk.akane.libphonograph.items.modifiedDate
 import uk.akane.libphonograph.manipulator.ItemManipulator
@@ -67,7 +64,7 @@ import java.util.GregorianCalendar
  * [SongAdapter] is an adapter for displaying songs.
  */
 class SongAdapter(
-    fragment: Fragment?,
+    val fragment: Fragment?,
     val queueTitle: Flow<String>?,
     songList: Flow<List<MediaItem>?> = (fragment?.requireContext() ?: fallbackContext!!)
         .gramophoneApplication.reader.songListFlow,
@@ -234,7 +231,7 @@ class SongAdapter(
             setMediaItemsSeamlessly(songList, position, title)
             prepare()
             play()
-            if (currentItem?.mediaId == songList[position].mediaId) {
+            if (currentItem?.mediaId == songList[position].mediaId && fragment !is SearchFragment) {
                 mainActivity.playerBottomSheet.open()
             }
         }
@@ -320,17 +317,9 @@ class SongAdapter(
                     val mimeType = item.localConfiguration?.mimeType ?: "audio/*"
 
                     try {
-                        val contentUri = if (uri.scheme == "file") {
-                            FileProvider.getUriForFile(
-                                mainActivity,
-                                "${mainActivity.packageName}.fileProvider",
-                                File(uri.path!!)
-                            )
-                        } else uri
-
                         ShareCompat.IntentBuilder(mainActivity)
                             .setType(mimeType)
-                            .setStream(contentUri)
+                            .setStream(uri)
                             .setChooserTitle("Share audio file")
                             .startChooser()
                     } catch (e: Exception) {
@@ -419,8 +408,8 @@ class SongAdapter(
             return item.mediaMetadata.albumArtist?.toString() ?: ""
         }
 
-        override fun getAlbumYear(item: MediaItem): Long? {
-            return item.mediaMetadata.albumYear
+        override fun getAlbumYear(item: MediaItem): Int? {
+            return item.mediaMetadata.releaseYear
         }
 
         override fun getCover(item: MediaItem): Uri? {

@@ -18,11 +18,14 @@
 package org.akanework.gramophone.logic.utils
 
 import android.annotation.SuppressLint
+import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Base64
 import androidx.core.content.edit
+import androidx.core.net.toFile
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -36,20 +39,20 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.akanework.gramophone.BuildConfig
+import org.akanework.gramophone.logic.getFile
 import org.akanework.gramophone.logic.utils.exoplayer.EndedWorkaroundPlayer
 import uk.akane.libphonograph.items.EXTRA_ADD_DATE
 import uk.akane.libphonograph.items.EXTRA_ALBUM_ID
-import uk.akane.libphonograph.items.EXTRA_ALBUM_YEAR
 import uk.akane.libphonograph.items.EXTRA_ARTIST_ID
-import uk.akane.libphonograph.items.EXTRA_AUTHOR
 import uk.akane.libphonograph.items.EXTRA_CD_TRACK_NUMBER
+import uk.akane.libphonograph.items.EXTRA_FILE
+import uk.akane.libphonograph.items.EXTRA_HD_ARTWORK_URI
 import uk.akane.libphonograph.items.EXTRA_MODIFIED_DATE
 import uk.akane.libphonograph.items.addDate
 import uk.akane.libphonograph.items.albumId
-import uk.akane.libphonograph.items.albumYear
 import uk.akane.libphonograph.items.artistId
-import uk.akane.libphonograph.items.author
 import uk.akane.libphonograph.items.cdTrackNumber
+import uk.akane.libphonograph.items.hdArtworkUri
 import uk.akane.libphonograph.items.modifiedDate
 import java.nio.charset.StandardCharsets
 
@@ -110,7 +113,7 @@ class LastPlayedManager(
                 data.mediaItems.map {
                     val b = SafeDelimitedStringConcat(":")
                     // add new entries at the bottom and remember they are null for upgrade path
-                    b.writeStringUnsafe("ver_" + 1)
+                    b.writeStringUnsafe("ver_" + 3)
                     b.writeStringSafe(it.mediaId)
                     b.writeUri(it.localConfiguration?.uri)
                     b.writeStringSafe(it.localConfiguration?.mimeType)
@@ -138,7 +141,8 @@ class LastPlayedManager(
                     b.writeLong(it.mediaMetadata.durationMs)
                     b.writeLong(it.mediaMetadata.modifiedDate)
                     b.writeStringSafe(it.mediaMetadata.cdTrackNumber)
-                    b.writeLong(it.mediaMetadata.albumYear)
+                    b.writeUri(it.mediaMetadata.hdArtworkUri)
+                    b.writeStringSafe(it.getFile()?.path)
                     b.toString()
                 })
             prefs.edit {
@@ -157,7 +161,13 @@ class LastPlayedManager(
         }
     }
 
-    suspend fun restore(callback: (MediaItemsWithStartPosition?, CircularShuffleOrder.Persistent) -> Unit) {
+    class RestoredPlaylist(
+        val items: MediaItemsWithStartPosition, val title: String,
+        val seed: CircularShuffleOrder.Persistent?, val isEnded: Boolean, val repeatMode: Int,
+        val shuffle: Boolean, val playbackParameters: PlaybackParameters
+    )
+
+    suspend fun restore(callback: suspend (RestoredPlaylist?) -> Unit) {
         if (BuildConfig.DEBUG) {
             Log.d(TAG, "decoding playlist...")
         }
@@ -179,7 +189,7 @@ class LastPlayedManager(
                 val lastPlayedIdx = prefs.getInt("last_played_idx", 0)
                 val lastPlayedPos = prefs.getLong("last_played_pos", 0)
                 if (lastPlayedGrp == null || lastPlayedLst == null) {
-                    runCallback(callback, seed) { null }
+                    callback(null)
                     return@withContext
                 }
                 val repeatMode = prefs.getInt("repeat_mode", Player.REPEAT_MODE_OFF)
@@ -241,7 +251,15 @@ class LastPlayedManager(
                                 b.skip() // used to be Path
                             val modifiedDate = b.readLong()
                             val cdTrackNumber = b.readStringSafe()
-                            val albumYear = b.readLong()
+                            if (version < 3)
+                                b.skip() // used to be AlbumYear
+                            val hdArtworkUri = b.readUri()
+                            val file = if (version >= 2) b.readStringSafe() else uri.let {
+                                uri = ContentUris.withAppendedId(
+                                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                                    mediaId!!.substring("MediaStore:".length).toLong())
+                                it!!.toFile().path
+                            }
                             MediaItem.Builder()
                                 .setUri(uri)
                                 .setMediaId(mediaId!!)
@@ -252,6 +270,7 @@ class LastPlayedManager(
                                         .setTitle(title)
                                         .setArtist(artist)
                                         .setWriter(writer)
+                                        .setAuthor(author)
                                         .setComposer(composer)
                                         .setGenre(genre)
                                         .setCompilation(compilation)
@@ -277,13 +296,15 @@ class LastPlayedManager(
                                             if (albumId != null) {
                                                 putLong(EXTRA_ALBUM_ID, albumId)
                                             }
-                                            if (albumYear != null) {
-                                                putLong(EXTRA_ALBUM_YEAR, albumYear)
-                                            }
                                             putString(EXTRA_CD_TRACK_NUMBER, cdTrackNumber)
-                                            putString(EXTRA_AUTHOR, author)
                                             if (modifiedDate != null) {
                                                 putLong(EXTRA_MODIFIED_DATE, modifiedDate)
+                                            }
+                                            if (hdArtworkUri != null) {
+                                                putParcelable(EXTRA_HD_ARTWORK_URI, hdArtworkUri)
+                                            }
+                                            if (file != null) {
+                                                putString(EXTRA_FILE, file)
                                             }
                                         })
                                         .build()
@@ -291,22 +312,20 @@ class LastPlayedManager(
                                 .build()
                         },
                     lastPlayedIdx,
-                    lastPlayedPos
+                    lastPlayedPos,
                 )
-                runCallback(callback, seed) {
-                    if (BuildConfig.DEBUG) {
-                        Log.d(
-                            TAG,
-                            "restoring playlist (${data.mediaItems.size} items, repeat $repeatMode, " +
-                                    "shuffle $shuffleModeEnabled, ended $ended)..."
-                        )
-                    }
-                    controller.isEnded = ended
-                    controller.repeatMode = repeatMode
-                    controller.shuffleModeEnabled = shuffleModeEnabled
-                    controller.playbackParameters = playbackParameters
-                    data
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        TAG,
+                        "restoring playlist (${data.mediaItems.size} items, repeat $repeatMode, " +
+                                "shuffle $shuffleModeEnabled, ended $ended)..."
+                    )
                 }
+                if (seed.data != null && seed.data.size != data.mediaItems.size)
+                    throw IllegalStateException("Bad shuffle order size ${seed.data.size} for" +
+                            " ${data.mediaItems.size} items")
+                callback(RestoredPlaylist(data, "LastPlayedManager" /* TODO(MQ) */,
+                    seed, ended, repeatMode, shuffleModeEnabled, playbackParameters))
                 return@withContext
             } catch (e: Exception) {
                 try {
@@ -314,22 +333,11 @@ class LastPlayedManager(
                 } catch (_: Exception) {
                 }
                 Log.e(TAG, Log.getThrowableString(e)!!)
-                runCallback(callback, seed) { null }
+                callback(null)
                 return@withContext
             }
         }
     }
-}
-
-private suspend inline fun runCallback(
-    crossinline callback: (
-        MediaItemsWithStartPosition?,
-        CircularShuffleOrder.Persistent
-    ) -> Unit,
-    seed: CircularShuffleOrder.Persistent,
-    noinline parameter: () -> MediaItemsWithStartPosition?
-) {
-    withContext(Dispatchers.Main) { callback(parameter(), seed) }
 }
 
 private class SafeDelimitedStringConcat(private val delimiter: String) {

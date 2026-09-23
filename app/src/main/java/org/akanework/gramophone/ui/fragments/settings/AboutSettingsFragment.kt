@@ -75,10 +75,7 @@ class AboutSettingsFragment : BasePreferenceFragment() {
                 BuildConfig.VERSION_NAME
             val aboutTextView = rootView.findViewById<TextView>(R.id.about_text)!!
             aboutTextView.text = requireContext()
-                .getString(R.string.opensource_info, "© 2023-2025 AkaneTan, nift4 and contributors")
-            // does not render correctly on old versions for mysterious reasons
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
-                rootView.findViewById<View>(R.id.iconCard)!!.visibility = View.GONE
+                .getString(R.string.opensource_info, "© 2023-2026 AkaneTan, nift4 and contributors")
         } else if (preference.key == "contributors") {
             startActivity(ContributorsSettingsActivity::class.java)
         } else if (preference.key == "package_type") {
@@ -93,7 +90,8 @@ class AboutSettingsFragment : BasePreferenceFragment() {
                 .setMessage(
                     """
                         Copyright (C) 2023-2024 AkaneTan
-                        Copyright (C) 2023-2025 nift4
+                        Copyright (C) 2023-2026 nift4
+                        Copyright (C) 2024 The Gramophone authors
 
                         This program is free software: you can redistribute it and/or modify
                         it under the terms of the GNU General Public License as published by

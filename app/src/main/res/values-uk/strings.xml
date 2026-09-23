@@ -45,8 +45,7 @@
     <string name="dialog_mime">MIME-тип</string>
     <string name="dialog_year">Рік</string>
     <string name="dialog_artist">Виконавець</string>
-    <string name="opensource_info">З відкритим кодом під ліцензією GPL-3.0
-\nАвторські права %s</string>
+    <string name="opensource_info">З відкритим кодом під ліцензією GPL-3.0 \nАвторські права %s</string>
     <string name="home_menu_settings">Налаштування</string>
     <string name="home_menu_refresh">Пересканувати</string>
     <string name="settings_contributors">Учасники розробки</string>
@@ -287,7 +286,6 @@
     <string name="settings_open_source_licenses">Ліцензії з відкритим кодом</string>
     <string name="oh_no">О ні!</string>
     <string name="send_email">Надіслати електронний лист</string>
-    <string name="send_email_manually">Будь ласка, надішліть журнал на nift4dev@gmail.com - не можу знайти поштову програму</string>
     <string name="failed_to_parse_lyric">Не вдалося проаналізувати текст</string>
     <string name="audio_signal_chain">Ланцюг звукового сигналу</string>
     <string name="audio_not_initialized">Система відтворення аудіо не ініціалізована. Спробуй щось зіграти!</string>
@@ -441,13 +439,12 @@
     </plurals>
     <string name="settings_cookie_summary">Зробіть обкладинку альбому у формі печива</string>
     <string name="settings_cookie_info">Обкладинка для печива</string>
-    <string name="settings_pure_dark">Чисто темна тема</string>
     <string name="settings_pure_dark_summary">Тема, де всі поверхні в додатку повністю чорні (може спричинити чорний ефект на OLED-дисплеях)</string>
     <string name="settings_stop_on_dismiss">Зупинити при закритті</string>
     <string name="settings_stop_on_dismiss_summary">Зупинити відтворення, коли завдання програми видалено з нещодавніх</string>
     <string name="compact_grid">Сітка (компактна)</string>
     <string name="sort_by_album_year">Рік випуску альбому</string>
-    <string name="sort_by_album_artist_year"><![CDATA[Album artist -> рік]]></string>
+    <string name="sort_by_album_artist_year"><![CDATA[Album artist -&gt; рік]]></string>
     <string name="forbidden_symbol_error">Недійсний символ в імені</string>
     <string name="translators">Перекладачі</string>
     <string name="settings_replaygain">ReplayGain</string>
@@ -473,7 +470,7 @@
     <string name="settings_replaygain_no_rg_amp_desc">Зменште гучність гучних пісень, які не мають тегів ReplayGain</string>
     <string name="settings_replaygain_preamp_desc">Збільшуйте або зменшуйте гучність пісень за допомогою тегів ReplayGain. Вищі значення можуть призвести до втрати динаміки через запобігання обрізанню.</string>
     <string name="settings_replaygain_mode_desc">«Smart» автоматично зберігає динаміку альбому лише під час послідовного відтворення пісень з альбому.</string>
-    <string name="sort_by_artist_year"><![CDATA[Виконавець -> рік]]></string>
+    <string name="sort_by_artist_year"><![CDATA[Виконавець -&gt; рік]]></string>
     <string name="clear_queue">Очистити чергу</string>
     <string name="contributors_saladnoober">Гарантія якості</string>
     <string name="actions_query_shuffle_all_songs">перемішати всі пісні</string>

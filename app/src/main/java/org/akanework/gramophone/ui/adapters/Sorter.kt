@@ -43,7 +43,7 @@ class Sorter<T>(
         open fun getFile(item: T): File = throw UnsupportedOperationException()
         open fun getAlbumTitle(item: T): String? = throw UnsupportedOperationException()
         open fun getAlbumArtist(item: T): String? = throw UnsupportedOperationException()
-        open fun getAlbumYear(item: T): Long? = throw UnsupportedOperationException()
+        open fun getAlbumYear(item: T): Int? = throw UnsupportedOperationException()
         open fun getSize(item: T): Int = throw UnsupportedOperationException()
         open fun getAlbumSize(item: T): Int = throw UnsupportedOperationException()
         open fun getAddDate(item: T): Long = throw UnsupportedOperationException()
@@ -104,12 +104,12 @@ class Sorter<T>(
         ByAlbumYearDescending, ByAlbumYearAscending,
         BySizeDescending, BySizeAscending,
         ByAlbumSizeDescending, ByAlbumSizeAscending,
-        NaturalOrder, ByAddDateDescending, ByAddDateAscending,
+        NaturalOrder, NaturalOrderDescending, ByAddDateDescending, ByAddDateAscending,
         ByReleaseDateDescending, ByReleaseDateAscending,
         ByModifiedDateDescending, ByModifiedDateAscending,
         ByFilePathDescending, ByFilePathAscending,
         ByDurationDescending, ByDurationAscending,
-        ByDiscAndTrack,
+        ByDiscAndTrack, ByDiscAndTrackDescending,
         None;
 
         companion object {
@@ -132,7 +132,8 @@ class Sorter<T>(
                 BySizeAscending -> BySizeDescending
                 ByAlbumSizeDescending -> ByAlbumSizeAscending
                 ByAlbumSizeAscending -> ByAlbumSizeDescending
-                NaturalOrder -> null
+                NaturalOrder -> NaturalOrderDescending
+                NaturalOrderDescending -> NaturalOrder
                 ByAddDateDescending -> ByAddDateAscending
                 ByAddDateAscending -> ByAddDateDescending
                 ByReleaseDateDescending -> ByReleaseDateAscending
@@ -143,7 +144,8 @@ class Sorter<T>(
                 ByFilePathAscending -> ByFilePathDescending
                 ByDurationDescending -> ByDurationAscending
                 ByDurationAscending -> ByDurationDescending
-                ByDiscAndTrack -> null
+                ByDiscAndTrack -> ByDiscAndTrackDescending
+                ByDiscAndTrackDescending -> ByDiscAndTrack
                 None -> null
             }
         }
@@ -151,9 +153,17 @@ class Sorter<T>(
 
     fun getSupportedTypes(): Set<Type> {
         return sortingHelper.typesSupported.let { types ->
+            var res = types
             if (naturalOrderHelper != null || rawOrderExposed == Type.NaturalOrder)
-                types + Type.NaturalOrder
-            else types
+                res = res + Type.NaturalOrder
+            
+            // Automatically add inverse for everything supported
+            val allWithInverses = mutableSetOf<Type>()
+            res.forEach { 
+                allWithInverses.add(it)
+                Type.inverse(it)?.let { inv -> allWithInverses.add(inv) }
+            }
+            allWithInverses
         }
     }
 
@@ -262,13 +272,13 @@ class Sorter<T>(
 
             Type.ByAlbumYearDescending -> {
                 SupportComparator.createInversionComparator(compareBy {
-                    sortingHelper.getAlbumYear(it) ?: Long.MIN_VALUE
+                    sortingHelper.getAlbumYear(it) ?: Int.MIN_VALUE
                 }, true, getComparatorNoReverse(Type.ByAlbumTitleAscending))
             }
 
             Type.ByAlbumYearAscending -> {
                 SupportComparator.createInversionComparator(compareBy {
-                    sortingHelper.getAlbumYear(it) ?: Long.MIN_VALUE
+                    sortingHelper.getAlbumYear(it) ?: Int.MIN_VALUE
                 }, false, getComparatorNoReverse(Type.ByAlbumTitleDescending))
             }
 
@@ -362,9 +372,21 @@ class Sorter<T>(
                 compareBy { sortingHelper.getDiscAndTrack(it) }
             }
 
+            Type.ByDiscAndTrackDescending -> {
+                SupportComparator.createInversionComparator(
+                    compareBy { sortingHelper.getDiscAndTrack(it) }, true
+                )
+            }
+
             Type.NaturalOrder -> {
                 SupportComparator.createInversionComparator(
                     compareBy { naturalOrderHelper!!.lookup(it) }, false
+                )
+            }
+
+            Type.NaturalOrderDescending -> {
+                SupportComparator.createInversionComparator(
+                    compareBy { naturalOrderHelper!!.lookup(it) }, true
                 )
             }
 
@@ -415,7 +437,7 @@ class Sorter<T>(
                 sortingHelper.getAlbumSize(item).toString()
             }
 
-            Type.ByDiscAndTrack -> {
+            Type.ByDiscAndTrack, Type.ByDiscAndTrackDescending -> {
                 sortingHelper.getDiscAndTrack(item).toString()
             }
 
@@ -428,15 +450,15 @@ class Sorter<T>(
             }
 
             Type.ByModifiedDateDescending, Type.ByModifiedDateAscending -> {
-                CalculationUtils.convertUnixTimestampToMonthDay(sortingHelper.getAddDate(item))
+                CalculationUtils.convertUnixTimestampToMonthDay(sortingHelper.getModifiedDate(item))
             }
 
             Type.ByDurationDescending, Type.ByDurationAscending -> {
                 CalculationUtils.convertDurationToTimeStamp(sortingHelper.getDuration(item))
             }
 
-            Type.NaturalOrder -> {
-                (if (rawOrderExposed == sortType) {
+            Type.NaturalOrder, Type.NaturalOrderDescending -> {
+                (if (rawOrderExposed == sortType || (rawOrderExposed != null && Type.inverse(rawOrderExposed) == sortType)) {
                     pos
                 } else {
                     naturalOrderHelper!!.lookup(item)

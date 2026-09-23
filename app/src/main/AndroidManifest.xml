@@ -8,6 +8,7 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>
     <uses-feature android:name="android.hardware.bluetooth" android:required="false"/>
     <uses-feature android:name="android.hardware.faketouch" android:required="false"/>
+    <uses-feature android:name="android.hardware.usb.host" android:required="false"/>
     <uses-feature android:name="android.hardware.type.pc" android:required="false"/>
     <uses-feature android:name="android.software.app_widgets" android:required="false"/>
 
@@ -69,11 +70,9 @@
         <meta-data
             android:name="com.google.android.gms.car.application.theme"
             android:resource="@style/Theme.Gramophone"/>
-<!-- TODO uncomment to enable Android Auto when library browsing is implemented
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc"/>
--->
         <activity
             android:name=".logic.ui.BugHandlerActivity"
             android:exported="false"
@@ -245,6 +244,18 @@
             android:authorities="${applicationId}.search"
             android:exported="true"
             android:readPermission="android.permission.GLOBAL_SEARCH" />
+
+        <!--
+            Security: this provider is carefully designed to not leak more data than what the
+            platform media provider publicly shares (which is required for legacy flows such as
+            MediaSession queue).
+        -->
+        <provider
+            android:name=".logic.GramophoneAlbumArtProvider"
+            android:authorities="${applicationId}.albumart"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            tools:ignore="ExportedContentProvider" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

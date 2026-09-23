@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2025 nift4
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.logic.ui
 
 import android.content.Context
@@ -27,8 +44,8 @@ private class InnerMeiZuLyricsMediaNotificationProvider(
         actionFactory: MediaNotification.ActionFactory
     ): IntArray {
         val ticker = tickerProvider()
-        val title = mediaSession.player.mediaMetadata.title.toString()
-        val artist = mediaSession.player.mediaMetadata.artist.toString()
+        val title = mediaSession.player.mediaMetadata.title?.toString() ?: ""
+        val artist = mediaSession.player.mediaMetadata.artist?.toString() ?: ""
 
         val bundle = IsLandHelp.isLandMusicShare(
             addpic = Bundle(),
@@ -51,7 +68,7 @@ private class InnerMeiZuLyricsMediaNotificationProvider(
 
 class MeiZuLyricsMediaNotificationProvider(
     context: MediaSessionService,
-    private val tickerProvider: () -> CharSequence?,
+    private val tickerProvider: () -> CharSequence?
 ) : MediaNotification.Provider {
     private val inner = InnerMeiZuLyricsMediaNotificationProvider(context, tickerProvider).apply {
         setSmallIcon(R.drawable.ic_gramophone_monochrome)
@@ -82,6 +99,8 @@ class MeiZuLyricsMediaNotificationProvider(
         action: String,
         extras: Bundle
     ) = inner.handleCustomCommand(session, action, extras)
+
+    override fun getNotificationChannelInfo() = inner.notificationChannelInfo
 
     private fun MediaNotification.applyNotificationFlags(
         alwaysShowTicker: Boolean,

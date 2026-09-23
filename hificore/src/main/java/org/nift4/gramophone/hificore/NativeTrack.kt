@@ -27,16 +27,21 @@ import android.media.AudioManager
 import android.media.AudioMetadataReadMap
 import android.media.AudioPresentation
 import android.media.AudioRouting
+import android.media.AudioTimestamp
 import android.media.AudioTrack
+import android.media.PlaybackParams
 import android.media.VolumeShaper
 import android.media.metrics.LogSessionId
 import android.os.Build
+import android.os.Handler
 import android.os.Parcel
 import android.os.PersistableBundle
+import android.util.ArrayMap
 import androidx.annotation.RequiresApi
 import androidx.core.content.getSystemService
 import androidx.media3.common.util.Log
 import java.nio.ByteBuffer
+
 
 /*
  * Exposes most of the API surface of AudioTrack.cpp, with one minor exceptions:
@@ -46,17 +51,51 @@ import java.nio.ByteBuffer
  * fail.
  * TODO: tone down the magic numbers a bit.
  */
+/*
+ * TODO:
+ * https://cs.android.com/android/_/android/platform/frameworks/av/+/978f2737e2f5f0ada8e109f9bf57a02d512b06c4
+ * https://cs.android.com/android/_/android/platform/frameworks/av/+/9651a54f1e0afe7a33cd99afded17fe6afd1f77d
+ * https://cs.android.com/android/_/android/platform/frameworks/av/+/7a476ef1a439b7a4f4368bb05ac95f732a84a3cf
+ * https://cs.android.com/android/_/android/platform/frameworks/av/+/a40a5aabe7ec0d042d88e263703ff13ea5720dca
+ * https://cs.android.com/android/_/android/platform/frameworks/av/+/955b2624c813135d2622c6466eb4e101cccc2358
+ *
+ * audit the offload EOS handling as that's mostly implemented in java and might not work in this
+ * proxy setup because proxy doesn't receive stream end callback.
+ */
 @Suppress("unused")
-class NativeTrack(
-    context: Context, attributes: AudioAttributes, streamType: Int, sampleRate: Int,
-    format: UInt, channelMask: UInt, frameCount: Int?, trackFlags: Int,
-    sessionId: Int, maxRequiredSpeed: Float, selectedDeviceId: Int?, bitRate: Int, durationUs: Long,
-    hasVideo: Boolean, smallBuf: Boolean, isStreaming: Boolean, offloadBufferSize: Int,
-    notificationFrames: Int, doNotReconnect: Boolean, transferMode: TransferMode, contentId: Int?,
-    syncId: Int?, encapsulationMode: Int, sharedMem: ByteBuffer?
-) {
+class NativeTrack private constructor(builder: Builder) {
     companion object {
+        const val AUDIO_OUTPUT_FLAG_NONE = 0x0
+        const val AUDIO_OUTPUT_FLAG_DIRECT = 0x1
+        const val AUDIO_OUTPUT_FLAG_PRIMARY = 0x2
+        const val AUDIO_OUTPUT_FLAG_FAST = 0x4
+        const val AUDIO_OUTPUT_FLAG_DEEP_BUFFER = 0x8
+        const val AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD = 0x10
+        const val AUDIO_OUTPUT_FLAG_NON_BLOCKING = 0x20
+        const val AUDIO_OUTPUT_FLAG_HW_AV_SYNC = 0x40
+        const val AUDIO_OUTPUT_FLAG_TTS = 0x80
+        const val AUDIO_OUTPUT_FLAG_RAW = 0x100
+        const val AUDIO_OUTPUT_FLAG_SYNC = 0x200
+        const val AUDIO_OUTPUT_FLAG_IEC958_NONAUDIO = 0x400
+        const val AUDIO_OUTPUT_FLAG_DIRECT_PCM = 0x2000
+        const val AUDIO_OUTPUT_FLAG_MMAP_NOIRQ = 0x4000
+        const val AUDIO_OUTPUT_FLAG_VOIP_RX = 0x8000
+        const val AUDIO_OUTPUT_FLAG_INCALL_MUSIC = 0x10000
+        const val AUDIO_OUTPUT_FLAG_GAPLESS_OFFLOAD = 0x20000
+        const val AUDIO_OUTPUT_FLAG_SPATIALIZER = 0x40000
+        const val AUDIO_OUTPUT_FLAG_ULTRASOUND = 0x80000
+        const val AUDIO_OUTPUT_FLAG_BIT_PERFECT = 0x100000
         private const val TAG = "NativeTrack.kt"
+        private const val WOULD_BLOCK = -11L
+        private const val DEAD_OBJECT = -32
+        private const val NO_INIT = -19L
+        private const val STREAM_TYPE_DEFAULT = -1
+        const val STATE_ACTIVE = 0
+        const val STATE_STOPPED = 1
+        const val STATE_PAUSED = 2
+        const val STATE_PAUSED_STOPPING = 3
+        const val STATE_FLUSHED = 4
+        const val STATE_STOPPING = 5
         const val ENCAPSULATION_MODE_NONE = 0 // AudioTrack.ENCAPSULATION_MODE_NONE
         const val ENCAPSULATION_MODE_ELEMENTARY_STREAM =
             1 // AudioTrack.ENCAPSULATION_MODE_ELEMENTARY_STREAM
@@ -105,6 +144,8 @@ class NativeTrack(
                 get() = directBitstream || offload
         }
 
+        @JvmStatic
+        @JvmName("getDirectPlaybackSupport")
         fun getDirectPlaybackSupport(
             context: Context, sampleRate: Int, encoding: UInt, platformEncoding: Int?,
             channelMask: UInt, platformChannelMask: Int?
@@ -181,8 +222,8 @@ class NativeTrack(
                 } else {
                     // be careful: both of these methods consider inactive routes
                     return when (getPlaybackOffloadSupportPlatformCompat(format, attributes)) {
-                        AudioManager.PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED -> return DirectPlaybackSupport.GAPLESS_OFFLOAD
-                        AudioManager.PLAYBACK_OFFLOAD_SUPPORTED -> return DirectPlaybackSupport.OFFLOAD
+                        AudioManager.PLAYBACK_OFFLOAD_GAPLESS_SUPPORTED -> DirectPlaybackSupport.GAPLESS_OFFLOAD
+                        AudioManager.PLAYBACK_OFFLOAD_SUPPORTED -> DirectPlaybackSupport.OFFLOAD
                         else -> {
                             // isDirectPlaybackSupported does not care whether offload is possible,
                             // and will happily return true if offload profile is found and pretend
@@ -207,6 +248,7 @@ class NativeTrack(
                 bitWidth * Integer.bitCount(channelMask.toInt()) * sampleRate
             } else 128 // arbitrary guess for compressed formats
             val durationUs = 2100L /* 3.5min * 60 */ * 1000 * 1000 // must be >60s
+            val directOffloadFlag = AUDIO_OUTPUT_FLAG_DIRECT or AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD
             if (!(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N
                         && Build.VERSION.SDK_INT <= Build.VERSION_CODES.O_MR1)
                 || !formatIsRawPcm(encoding) || bitWidth < 24
@@ -242,21 +284,15 @@ class NativeTrack(
                 // safeguard against bad direct track recycling on O by opening new session every time
                 val sessionId = context.getSystemService<AudioManager>()!!.generateAudioSessionId()
                 try {
-                    val track = NativeTrack(
-                        context, attributes, AudioManager.STREAM_MUSIC, sampleRate, encoding,
-                        channelMask, null, 0x11, sessionId, 1.0f, null, bitrate, durationUs,
-                        hasVideo = false,
-                        smallBuf = false,
-                        isStreaming = false,
-                        offloadBufferSize = 0,
-                        notificationFrames = 0,
-                        doNotReconnect = true,
-                        transferMode = TransferMode.Sync,
-                        contentId = null,
-                        syncId = null,
-                        encapsulationMode = ENCAPSULATION_MODE_NONE,
-                        sharedMem = null
-                    )
+                    val track = Builder(context, attributes, encoding, channelMask).apply {
+                        this.sampleRate = sampleRate
+                        this.trackFlags = directOffloadFlag
+                        this.sessionId = sessionId
+                        this.maxRequiredSpeed = 1.0f
+                        this.bitRate = bitrate
+                        this.durationUs = durationUs
+                        this.doNotReconnect = true
+                    }.build()
                     val port = AudioSystemHiddenApi.getMixPortForThread(track.getOutput())
                     val flags = track.flags()
                     track.release()
@@ -271,10 +307,10 @@ class NativeTrack(
                         )
                         return DirectPlaybackSupport.NONE
                     }
-                    if ((flags and 0x11) == 0x11) {
+                    if ((flags and directOffloadFlag) == directOffloadFlag) {
                         return DirectPlaybackSupport.OFFLOAD
                     }
-                    if ((flags and 0x11) == 0x1) {
+                    if ((flags and directOffloadFlag) == AUDIO_OUTPUT_FLAG_DIRECT) {
                         return DirectPlaybackSupport.DIRECT
                     }
                 } catch (t: Throwable) {
@@ -287,21 +323,15 @@ class NativeTrack(
             // check for direct output below Q by opening track...
             val sessionId = context.getSystemService<AudioManager>()!!.generateAudioSessionId()
             try {
-                val track = NativeTrack(
-                    context, attributes, AudioManager.STREAM_MUSIC, sampleRate, encoding,
-                    channelMask, null, 0x1, sessionId, 1.0f, null, bitrate, durationUs,
-                    hasVideo = false,
-                    smallBuf = false,
-                    isStreaming = false,
-                    offloadBufferSize = 0,
-                    notificationFrames = 0,
-                    doNotReconnect = true,
-                    transferMode = TransferMode.Sync,
-                    contentId = null,
-                    syncId = null,
-                    encapsulationMode = ENCAPSULATION_MODE_NONE,
-                    sharedMem = null
-                )
+                val track = Builder(context, attributes, encoding, channelMask).apply {
+                    this.sampleRate = sampleRate
+                    this.trackFlags = AUDIO_OUTPUT_FLAG_DIRECT
+                    this.sessionId = sessionId
+                    this.maxRequiredSpeed = 1.0f
+                    this.bitRate = bitrate
+                    this.durationUs = durationUs
+                    this.doNotReconnect = true
+                }.build()
                 val port = AudioSystemHiddenApi.getMixPortForThread(track.getOutput())
                 val flags = track.flags()
                 track.release()
@@ -316,10 +346,10 @@ class NativeTrack(
                     )
                     return DirectPlaybackSupport.NONE
                 }
-                if ((flags and 0x11) == 0x11) {
+                if ((flags and directOffloadFlag) == directOffloadFlag) {
                     return DirectPlaybackSupport.OFFLOAD
                 }
-                if ((flags and 0x11) == 0x1) {
+                if ((flags and directOffloadFlag) == AUDIO_OUTPUT_FLAG_DIRECT) {
                     return DirectPlaybackSupport.DIRECT
                 }
             } catch (t: Throwable) {
@@ -353,27 +383,36 @@ class NativeTrack(
             }
         }
 
+        @JvmStatic
+        @JvmName("getMinBufferSize")
         fun getMinBufferSize(sampleRateInHz: Int, channelConfig: Int, audioFormat: UInt): Int {
-            val minFrameCount = getMinFrameCount(-1, sampleRateInHz)
+            val minFrameCount = getMinFrameCount(STREAM_TYPE_DEFAULT, sampleRateInHz)
             val bps = bitsPerSampleForFormat(audioFormat)
             if (bps == 0) // compressed
                 return minFrameCount
             return minFrameCount * Integer.bitCount(channelConfig) * (bps / 8)
         }
 
+        @JvmStatic
         fun getMinFrameCount(streamType: Int, sampleRateInHz: Int): Int {
             prepareForLib()
-            return try {
+            val comboRet = try {
                 getMinFrameCountInternal(streamType, sampleRateInHz)
             } catch (t: Throwable) {
                 throw NativeTrackException(
                     "failed to get min frame count ($streamType, $sampleRateInHz)",
                     t
                 )
+            }.toULong()
+            val ret = (comboRet shr 32).toInt()
+            val out = comboRet.toInt()
+            if (ret != 0) {
+                throw NativeTrackException("getMinFrameCount() failed: $ret (data=$out)")
             }
+            return out
         }
 
-        private external fun getMinFrameCountInternal(streamType: Int, sampleRateInHz: Int): Int
+        private external fun getMinFrameCountInternal(streamType: Int, sampleRateInHz: Int): Long
         private fun prepareForLib() {
             if (!AudioTrackHiddenApi.canLoadLib())
                 throw NativeTrackException("this device is banned")
@@ -388,11 +427,12 @@ class NativeTrack(
                 throw NativeTrackException("initDlsym() returned false")
         }
 
+        @JvmStatic
+        @JvmName("bitsPerSampleForFormat")
         fun bitsPerSampleForFormat(format: UInt): Int {
             val cafOffloadMain = when {
                 Build.VERSION.SDK_INT >= 25 -> null
-                Build.VERSION.SDK_INT >= 23 -> 0x1A000000U
-                else -> 0x1C000000U
+                else -> 0x1A000000U
             }
             val normalized =
                 if (cafOffloadMain != null && (format and 0xff000000U) == cafOffloadMain) {
@@ -407,6 +447,8 @@ class NativeTrack(
             }
         }
 
+        @JvmStatic
+        @JvmName("formatIsRawPcm")
         fun formatIsRawPcm(format: UInt) =
             (format and 0xff000000U /* AUDIO_FORMAT_MAIN_MASK */) == 0U
 
@@ -445,37 +487,48 @@ class NativeTrack(
         ): Int
 
         private external fun initDlsym(): Boolean
-        fun forTest(context: Context): NativeTrack {
-            return NativeTrack(
-                context,
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build(),
-                0,
-                sampleRate = 13370,
-                0x1U, // pcm 16bit
-                channelMask = 3U,
-                frameCount = null,
-                trackFlags = 1,
-                AudioManager.AUDIO_SESSION_ID_GENERATE,
-                maxRequiredSpeed = 1.0f,
-                selectedDeviceId = null,
-                bitRate = 0,
-                durationUs = 0,
-                hasVideo = false,
-                smallBuf = false,
-                isStreaming = false,
-                offloadBufferSize = 0,
-                notificationFrames = 0,
-                doNotReconnect = false,
-                transferMode = TransferMode.Sync,
-                contentId = null,
-                syncId = null,
-                encapsulationMode = ENCAPSULATION_MODE_NONE,
-                sharedMem = null
-            )
+    }
+
+    class Builder(val context: Context, val attributes: AudioAttributes,
+        val format: UInt, val channelMask: UInt) {
+        var sampleRate: Int = 0
+        var streamType: Int = STREAM_TYPE_DEFAULT
+        var frameCount: Int? = null
+        var trackFlags: Int = 0
+        var sessionId: Int = AudioManager.AUDIO_SESSION_ID_GENERATE
+        var maxRequiredSpeed: Float = 8f
+        var selectedDeviceId: Int? = null
+        var bitRate: Int = 0
+        var durationUs: Long = 0L
+        var hasVideo: Boolean = false
+        var smallBuf: Boolean = false
+        var isStreaming: Boolean = false
+        var offloadBufferSize: Int = 0
+        var notificationFrames: Int = 0
+        var doNotReconnect: Boolean = false
+        var transferMode: TransferMode = TransferMode.Sync
+        var contentId: Int? = null
+        var syncId: Int? = null
+        var encapsulationMode: Int = ENCAPSULATION_MODE_NONE
+        var sharedMem: ByteBuffer? = null
+
+        companion object {
+            @JvmName("create")
+            @JvmStatic
+            fun create(context: Context, attributes: AudioAttributes,
+                        format: Int, channelMask: Int) = Builder(
+                context, attributes, format.toUInt(), channelMask.toUInt())
         }
+
+        fun setBufferSizeInBytes(buffSizeInBytes: Int) {
+            val bps = bitsPerSampleForFormat(format) / 8
+            val frameSize = if (bps != 0) bps * channelMask.countOneBits() else 1
+            if ((buffSizeInBytes % frameSize) != 0)
+                throw IllegalArgumentException("bad buffer size $buffSizeInBytes for fs $frameSize")
+            frameCount = buffSizeInBytes / frameSize
+        }
+
+        fun build() = NativeTrack(this)
     }
 
     private val cachedFormat: UInt
@@ -506,30 +559,30 @@ class NativeTrack(
     private val audioManager: AudioManager
 
     init {
-        if (sharedMem?.isDirect == false)
+        if (builder.sharedMem?.isDirect == false)
             throw IllegalArgumentException("shared memory specified but isn't direct")
-        if (sharedMem == null && transferMode == TransferMode.Shared)
+        if (builder.sharedMem == null && builder.transferMode == TransferMode.Shared)
             throw IllegalArgumentException("transfer mode is Shared but sharedMem is null")
-        if (sharedMem != null && transferMode != TransferMode.Shared)
+        if (builder.sharedMem != null && builder.transferMode != TransferMode.Shared)
             throw IllegalArgumentException("transfer mode is not Shared but sharedMem is specified")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
-            transferMode == @Suppress("NewApi") TransferMode.SyncWithCallback
+            builder.transferMode == @Suppress("NewApi") TransferMode.SyncWithCallback
         )
             throw IllegalArgumentException("SyncWithCallback not supported on this android version")
-        if (frameCount != null && frameCount == 0)
+        if (builder.frameCount != null && builder.frameCount == 0)
             throw IllegalArgumentException("frameCount cannot be zero (did you mean to use null?)")
-        if (selectedDeviceId != null && selectedDeviceId == 0)
+        if (builder.selectedDeviceId != null && builder.selectedDeviceId == 0)
             throw IllegalArgumentException("selectedDeviceId cannot be zero (did you mean to use null?)")
-        if (syncId != null && syncId < 1)
+        if (builder.syncId != null && builder.syncId!! < 1)
             throw IllegalArgumentException("syncId must be positive (did you mean to use null?)")
-        if (contentId != null && contentId < 0)
+        if (builder.contentId != null && builder.contentId!! < 0)
             throw IllegalArgumentException("contentId cannot be negative (did you mean to use null?)")
-        if (contentId == 0 && syncId == null)
+        if (builder.contentId == 0 && builder.syncId == null)
             throw IllegalArgumentException("CONTENT_ID_NONE with no syncId (did you mean to use null?)")
         prepareForLib()
-        audioManager = context.getSystemService<AudioManager>()!!
+        audioManager = builder.context.getSystemService<AudioManager>()!!
         ptr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val ats = context.attributionSource
+            val ats = builder.context.attributionSource
             val parcel = Parcel.obtain()
             try {
                 ats.writeToParcel(parcel, 0)
@@ -549,59 +602,60 @@ class NativeTrack(
         if (ptr == 0L) {
             throw NativeTrackException("create() returned NULL")
         }
-        this.sessionId = if (sessionId == AudioManager.AUDIO_SESSION_ID_GENERATE)
-            context.getSystemService<AudioManager>()!!.generateAudioSessionId()
-        else sessionId
-        val usage = attributes.usage
-        val contentType = attributes.contentType
-        val hasOutputFlagDeepBufferSet = (trackFlags and 0x8) != 0
-        val attrFlags = attributes.flags or
+        this.sessionId = if (builder.sessionId == AudioManager.AUDIO_SESSION_ID_GENERATE)
+            builder.context.getSystemService<AudioManager>()!!.generateAudioSessionId()
+        else builder.sessionId
+        val usage = builder.attributes.usage
+        val contentType = builder.attributes.contentType
+        val hasOutputFlagDeepBufferSet = (builder.trackFlags and AUDIO_OUTPUT_FLAG_DEEP_BUFFER) != 0
+        val attrFlags = builder.attributes.flags or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2
-                    && attributes.isContentSpatialized
+                    && builder.attributes.isContentSpatialized
                 ) 0x4000 else 0) or
-                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2 && attributes.spatializationBehavior
+                (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S_V2 &&
+                    builder.attributes.spatializationBehavior
                     == AudioAttributes.SPATIALIZATION_BEHAVIOR_NEVER
                 ) 0x8000 else 0) or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-                    && attributes.areHapticChannelsMuted()
+                    && builder.attributes.areHapticChannelsMuted()
                 ) 0x800 else 0) or
                 (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
-                    when (attributes.allowedCapturePolicy) {
+                    when (builder.attributes.allowedCapturePolicy) {
                         AudioAttributes.ALLOW_CAPTURE_BY_NONE -> 0x1400
                         AudioAttributes.ALLOW_CAPTURE_BY_SYSTEM -> 0x400
                         else -> 0x0
                     } else 0) or (if (hasOutputFlagDeepBufferSet) 0x200 else 0x0)
-        val bitWidth = bitsPerSampleForFormat(format)
+        val bitWidth = bitsPerSampleForFormat(builder.format)
         // java streamType is compatible with native streamType
         val ret = try {
             set(
                 ptr = ptr,
-                streamType = streamType,
-                sampleRate = sampleRate,
-                format = format.toInt(),
-                channelMask = channelMask.toInt(),
-                frameCount = frameCount ?: 0,
-                trackFlags = trackFlags,
+                streamType = builder.streamType,
+                sampleRate = builder.sampleRate,
+                format = builder.format.toInt(),
+                channelMask = builder.channelMask.toInt(),
+                frameCount = builder.frameCount ?: 0,
+                trackFlags = builder.trackFlags,
                 sessionId = this.sessionId,
-                maxRequiredSpeed = maxRequiredSpeed,
-                selectedDeviceId = selectedDeviceId ?: 0,
-                bitRate = bitRate,
-                durationUs = durationUs,
-                hasVideo = hasVideo,
-                smallBuf = smallBuf,
-                isStreaming = isStreaming,
+                maxRequiredSpeed = builder.maxRequiredSpeed,
+                selectedDeviceId = builder.selectedDeviceId ?: 0,
+                bitRate = builder.bitRate,
+                durationUs = builder.durationUs,
+                hasVideo = builder.hasVideo,
+                smallBuf = builder.smallBuf,
+                isStreaming = builder.isStreaming,
                 bitWidth = bitWidth,
-                offloadBufferSize = offloadBufferSize,
+                offloadBufferSize = builder.offloadBufferSize,
                 usage = usage,
                 contentType = contentType,
                 attrFlags = attrFlags,
-                notificationFrames = notificationFrames,
-                doNotReconnect = doNotReconnect,
-                transferMode = transferMode.id,
-                contentId = contentId ?: 0,
-                syncId = syncId ?: 0,
-                encapsulationMode = encapsulationMode,
-                sharedMem = sharedMem
+                notificationFrames = builder.notificationFrames,
+                doNotReconnect = builder.doNotReconnect,
+                transferMode = builder.transferMode.id,
+                contentId = builder.contentId ?: 0,
+                syncId = builder.syncId ?: 0,
+                encapsulationMode = builder.encapsulationMode,
+                sharedMem = builder.sharedMem
             )
         } catch (t: Throwable) {
             try {
@@ -614,10 +668,10 @@ class NativeTrack(
             }
             throw NativeTrackException("set() threw exception", t)
         }
-        cachedFormat = format
-        cachedChannelMask = channelMask
-        cachedBuffer = sharedMem
-        this.transferMode = transferMode
+        cachedFormat = builder.format
+        cachedChannelMask = builder.channelMask
+        cachedBuffer = builder.sharedMem
+        this.transferMode = builder.transferMode
         if (ret != 0) {
             try {
                 dtor(ptr)
@@ -742,17 +796,35 @@ class NativeTrack(
     }
 
     fun isPlaying(): Boolean {
-        val state = state()
-        return state == 0 || state == 5
+        return getPlayState() == AudioTrack.PLAYSTATE_PLAYING
     }
 
-    fun frameCount(): Long {
+    // simplified to match android.media.AudioTrack
+    fun getPlayState(): Int {
+        // TODO: interaction with the simulated offload play state might be wrong here
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+            return proxy!!.playState
+        return when (val state = state()) {
+            STATE_ACTIVE, STATE_STOPPING -> AudioTrack.PLAYSTATE_PLAYING
+            STATE_STOPPED, STATE_FLUSHED -> AudioTrack.PLAYSTATE_STOPPED
+            STATE_PAUSED, STATE_PAUSED_STOPPING -> AudioTrack.PLAYSTATE_PAUSED
+            else -> throw IllegalStateException("invalid state $state")
+        }
+    }
+
+    fun frameCount(): Int {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+            return proxy!!.bufferSizeInFrames
         return AudioTrackHiddenApi.getFrameCountFromDump(dump())
             ?: throw IllegalStateException("frameCount failed, check prior logs")
     }
 
+    // alias to match android.media.AudioTrack
+    fun getBufferSizeInFrames() = frameCount()
+
+    @JvmName("format")
     fun format(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -760,6 +832,9 @@ class NativeTrack(
     }
 
     fun sessionId() = sessionId
+
+    // alias to match android.media.AudioTrack
+    fun getAudioSessionId() = sessionId()
 
     /**
      * The accuracy of this method depends on the Android version:
@@ -806,12 +881,14 @@ class NativeTrack(
             ?: throw IllegalStateException("getPortId failed, check prior logs")
     }
 
+    @JvmName("channelMask")
     fun channelMask(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
         return cachedChannelMask
     }
 
+    @JvmName("latency")
     fun latency(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -834,13 +911,7 @@ class NativeTrack(
     }
 
     @RequiresApi(Build.VERSION_CODES.N)
-    fun getBufferSizeInFrames(): Int {
-        if (myState == State.RELEASED)
-            throw IllegalStateException("state is $myState")
-        return proxy!!.bufferSizeInFrames
-    }
-
-    @RequiresApi(Build.VERSION_CODES.N)
+    @JvmName("getBufferDurationInUs")
     fun getBufferDurationInUs(): ULong {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -849,7 +920,7 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("failed to get buffer duration us", t)
         }
-        if (ret == -32L) {
+        if (ret == DEAD_OBJECT.toLong()) {
             myState = State.DEAD_OBJECT
             throw NativeTrackException("getBufferDurationInUs() failed, track died")
         }
@@ -866,6 +937,13 @@ class NativeTrack(
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
         proxy!!.bufferSizeInFrames = size
+    }
+
+    @RequiresApi(Build.VERSION_CODES.N)
+    fun getBufferCapacityInFrames(): Int {
+        if (myState == State.RELEASED)
+            throw IllegalStateException("state is $myState")
+        return proxy!!.bufferCapacityInFrames
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
@@ -908,7 +986,7 @@ class NativeTrack(
             } catch (t: Throwable) {
                 throw NativeTrackException("failed to play", t)
             }
-            if (ret == -32) {
+            if (ret == DEAD_OBJECT) {
                 myState = State.DEAD_OBJECT
                 throw NativeTrackException("start() failed, track died")
             }
@@ -917,6 +995,9 @@ class NativeTrack(
             }
         }
     }
+
+    // alias to match android.media.AudioTrack
+    fun play() = start()
 
     private external fun startInternal(ptr: Long): Int
 
@@ -977,6 +1058,7 @@ class NativeTrack(
     private external fun pauseInternal(ptr: Long)
 
     @RequiresApi(Build.VERSION_CODES.S_V2)
+    @JvmName("pauseAndWait")
     fun pauseAndWait(timeoutMs: ULong): Boolean {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1011,19 +1093,16 @@ class NativeTrack(
 
     private external fun setVolumeInternal(ptr: Long, volume: Float): Int
 
-    fun setAuxEffectSendLevel(level: Float) {
+    fun setAuxEffectSendLevel(level: Float): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
-        if (proxy != null) {
+        return if (proxy != null) {
             proxy.setAuxEffectSendLevel(level)
         } else {
-            val ret = try {
+            try {
                 setAuxEffectSendLevelInternal(ptr, level)
             } catch (t: Throwable) {
                 throw NativeTrackException("failed to set aux effect send level to $level", t)
-            }
-            if (ret != 0) {
-                throw NativeTrackException("setAuxEffectSendLevel($level) failed: $ret")
             }
         }
     }
@@ -1042,6 +1121,7 @@ class NativeTrack(
 
     private external fun getAuxEffectSendLevelInternal(ptr: Long): Float
 
+    @JvmName("setSampleRate")
     fun setSampleRate(rate: UInt) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1057,7 +1137,8 @@ class NativeTrack(
 
     private external fun setSampleRateInternal(ptr: Long, rate: Int): Int
 
-    fun getSampleRate(): UInt {
+    @JvmName("getPlaybackSampleRate")
+    fun getPlaybackSampleRate(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
         return try {
@@ -1069,7 +1150,7 @@ class NativeTrack(
 
     private external fun getSampleRateInternal(ptr: Long): Int
 
-    @RequiresApi(Build.VERSION_CODES.M)
+    @JvmName("getOriginalSampleRate")
     fun getOriginalSampleRate(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1080,25 +1161,26 @@ class NativeTrack(
         }.toUInt()
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     private external fun getOriginalSampleRateInternal(ptr: Long): Int
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @JvmName("getHalSampleRate")
     fun getHalSampleRate(): UInt {
         return AudioTrackHiddenApi.getHalSampleRate(proxy!!) ?: 0u
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @JvmName("getHalChannelCount")
     fun getHalChannelCount(): Int {
         return AudioTrackHiddenApi.getHalChannelCount(proxy!!) ?: 0
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    @JvmName("getHalFormat")
     fun getHalFormat(): UInt {
         return AudioTrackHiddenApi.getHalFormat(proxy!!) ?: 0u
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
     fun setPlaybackRate(rate: PlaybackRate) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1123,7 +1205,23 @@ class NativeTrack(
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
+    // simplified for android.media.AudioTrack
+    fun setPlaybackParams(params: PlaybackParams) {
+        setPlaybackRate(PlaybackRate(
+            speed = params.speed,
+            pitch = params.pitch,
+            fallback = when (params.audioFallbackMode) {
+                PlaybackParams.AUDIO_FALLBACK_MODE_FAIL ->
+                    StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_FAIL
+                PlaybackParams.AUDIO_FALLBACK_MODE_MUTE ->
+                    StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_MUTE
+                else ->
+                    StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_DEFAULT
+            },
+            stretchForVoice = false
+        ))
+    }
+
     private external fun setPlaybackRateInternal(
         ptr: Long,
         speed: Float,
@@ -1146,14 +1244,13 @@ class NativeTrack(
         val fallback: StretchFallbackMode
     )
 
-    @RequiresApi(Build.VERSION_CODES.M)
     fun getPlaybackRate(): PlaybackRate {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
         val speedPitch = FloatArray(2)
-        val ret = getPlaybackRateInternal(ptr, speedPitch)
-        val stretchForVoice = (ret shr 32).toInt()
-        val fallbackMode = ret.toInt()
+        val ret = getPlaybackRateInternal(ptr, speedPitch).toULong()
+        val stretchForVoice = ((ret and 0xffffffff00000000UL) shr 32).toInt()
+        val fallbackMode = (ret and 0x00000000ffffffffUL).toUInt().toInt()
         return PlaybackRate(
             speedPitch[0], speedPitch[1],
             stretchForVoice == 1, when (fallbackMode) {
@@ -1161,12 +1258,23 @@ class NativeTrack(
                 0 -> StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_DEFAULT
                 1 -> StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_MUTE
                 2 -> StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_FAIL
-                else -> throw IllegalArgumentException("timestretch $ret")
+                else -> throw IllegalArgumentException("timestretch $fallbackMode")
             }
         )
     }
 
-    @RequiresApi(Build.VERSION_CODES.M)
+    // simplified for android.media.AudioTrack
+    fun getPlaybackParams() = PlaybackParams().apply {
+        val rate = getPlaybackRate()
+        setPitch(rate.pitch)
+        setSpeed(rate.speed)
+        setAudioFallbackMode(when (rate.fallback) {
+            StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_MUTE -> PlaybackParams.AUDIO_FALLBACK_MODE_MUTE
+            StretchFallbackMode.AUDIO_TIMESTRETCH_FALLBACK_FAIL -> PlaybackParams.AUDIO_FALLBACK_MODE_FAIL
+            else -> PlaybackParams.AUDIO_FALLBACK_MODE_DEFAULT
+        })
+    }
+
     private external fun getPlaybackRateInternal(ptr: Long, speedPitch: FloatArray): Long
 
     @RequiresApi(Build.VERSION_CODES.S)
@@ -1197,6 +1305,7 @@ class NativeTrack(
         return proxy!!.audioDescriptionMixLeveldB
     }
 
+    @JvmName("setLoop")
     fun setLoop(loopStart: UInt, loopEnd: UInt, loopCount: Int) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1210,6 +1319,11 @@ class NativeTrack(
         }
     }
 
+    // alias to match android.media.AudioTrack
+    @JvmName("setLoopPoints")
+    fun setLoopPoints(loopStart: UInt, loopEnd: UInt, loopCount: Int) =
+        setLoop(loopStart, loopEnd, loopCount)
+
     private external fun setLoopInternal(
         ptr: Long,
         loopStart: Int,
@@ -1217,6 +1331,7 @@ class NativeTrack(
         loopCount: Int
     ): Int
 
+    @JvmName("setMarkerPosition")
     fun setMarkerPosition(markerPosition: UInt) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1230,8 +1345,13 @@ class NativeTrack(
         }
     }
 
+    // alias for android.media.AudioTrack
+    @JvmName("setNotificationMarkerPosition")
+    fun setNotificationMarkerPosition(markerPosition: UInt) = setMarkerPosition(markerPosition)
+
     private external fun setMarkerPositionInternal(ptr: Long, pos: Int): Int
 
+    @JvmName("getMarkerPosition")
     fun getMarkerPosition(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1248,8 +1368,13 @@ class NativeTrack(
         return data
     }
 
+    // alias for android.media.AudioTrack
+    @JvmName("getNotificationMarkerPosition")
+    fun getNotificationMarkerPosition() = getMarkerPosition()
+
     private external fun getMarkerPositionInternal(ptr: Long): Long
 
+    @JvmName("setPositionUpdatePeriod")
     fun setPositionUpdatePeriod(pos: UInt) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1263,8 +1388,13 @@ class NativeTrack(
         }
     }
 
+    // alias to match android.media.AudioTrack
+    @JvmName("setPositionNotificationPeriod")
+    fun setPositionNotificationPeriod(pos: UInt) = setPositionUpdatePeriod(pos)
+
     private external fun setPositionUpdatePeriodInternal(ptr: Long, pos: Int): Int
 
+    @JvmName("getPositionUpdatePeriod")
     fun getPositionUpdatePeriod(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1281,8 +1411,12 @@ class NativeTrack(
         return data
     }
 
+    // alias to match android.media.AudioTrack
+    fun getPositionNotificationPeriod() = getPositionUpdatePeriod()
+
     private external fun getPositionUpdatePeriodInternal(ptr: Long): Long
 
+    @JvmName("setPosition")
     fun setPosition(pos: UInt) {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1296,8 +1430,13 @@ class NativeTrack(
         }
     }
 
+    // alias to match android.media.AudioTrack
+    @JvmName("setPlaybackHeadPosition")
+    fun setPlaybackHeadPosition(pos: UInt) = setPosition(pos)
+
     private external fun setPositionInternal(ptr: Long, pos: Int): Int
 
+    @JvmName("getPosition")
     fun getPosition(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1314,8 +1453,13 @@ class NativeTrack(
         return data
     }
 
+    // alias to match android.media.AudioTrack
+    @JvmName("getPlaybackHeadPosition")
+    fun getPlaybackHeadPosition() = getPosition()
+
     private external fun getPositionInternal(ptr: Long): Long
 
+    @JvmName("getBufferPosition")
     fun getBufferPosition(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1334,20 +1478,32 @@ class NativeTrack(
 
     private external fun getBufferPositionInternal(ptr: Long): Long
 
-    fun reload() {
+    fun reload(): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
-        val ret = try {
+        return try {
             reloadInternal(ptr)
         } catch (t: Throwable) {
             throw NativeTrackException("failed to reload", t)
         }
-        if (ret != 0) {
-            throw NativeTrackException("reload() failed: $ret")
+    }
+
+    // alias to match android.media.AudioTrack
+    fun reloadStaticData() = reload()
+
+    private external fun reloadInternal(ptr: Long): Int
+
+    fun getAudioTrackPtr(): Long {
+        if (myState == State.RELEASED)
+            throw IllegalStateException("state is $myState")
+        return try {
+            getAudioTrackPtrInternal(ptr)
+        } catch (t: Throwable) {
+            throw NativeTrackException("failed to get audio track ptr", t)
         }
     }
 
-    private external fun reloadInternal(ptr: Long): Int
+    private external fun getAudioTrackPtrInternal(ptr: Long): Long
 
     fun getOutput(): Int {
         if (myState == State.RELEASED)
@@ -1361,7 +1517,6 @@ class NativeTrack(
 
     private external fun getOutputInternal(ptr: Long): Int
 
-    @RequiresApi(Build.VERSION_CODES.M)
     fun setSelectedDevice(audioDeviceInfo: AudioDeviceInfo?): Boolean {
         if (audioDeviceInfo != null && !audioDeviceInfo.isSink)
             return false
@@ -1373,7 +1528,7 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("failed to set selected device", t)
         }
-        if (ret == -32) {
+        if (ret == DEAD_OBJECT) {
             myState = State.DEAD_OBJECT
             throw NativeTrackException("setSelectedDevice($id) failed, track died")
         }
@@ -1384,9 +1539,11 @@ class NativeTrack(
         return true
     }
 
+    // alias for android.media.AudioTrack
+    fun setPreferredDevice(audioDeviceInfo: AudioDeviceInfo?) = setSelectedDevice(audioDeviceInfo)
+
     private external fun setSelectedDeviceInternal(ptr: Long, id: Int): Int
 
-    @RequiresApi(Build.VERSION_CODES.M)
     fun getSelectedDevice(): AudioDeviceInfo? {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1396,14 +1553,13 @@ class NativeTrack(
             throw NativeTrackException("failed to set selected device", t)
         }
         if (id == 0) return null
-        // this is somewhat racy, we can loose a device between these two calls, but shrug
+        // this is somewhat racy, we can lose a device between these two calls, but shrug
         val device = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).find { it.id == id }
         return device
     }
 
     private external fun getSelectedDeviceInternal(ptr: Long): Int
 
-    @RequiresApi(Build.VERSION_CODES.M)
     fun getRoutedDevices(): List<AudioDeviceInfo> {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
@@ -1412,14 +1568,17 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("failed to set selected device", t)
         }
-        // this is somewhat racy, we can loose a device between these two calls, but shrug
+        // this is somewhat racy, we can lose a device between these two calls, but shrug
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         return ids.map { id -> devices.find { it.id == id } }.filterNotNull()
     }
 
+    // alias to match android.media.AudioTrack
+    fun getRoutedDevice() = getRoutedDevices().firstOrNull()
+
     private external fun getRoutedDevicesInternal(ptr: Long): IntArray
 
-    fun attachAuxEffect(effectId: Int) {
+    fun attachAuxEffect(effectId: Int): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
         val ret = try {
@@ -1427,13 +1586,11 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("failed to attach aux effect $effectId", t)
         }
-        if (ret == -32) {
+        if (ret == DEAD_OBJECT) {
             myState = State.DEAD_OBJECT
             throw NativeTrackException("attachAuxEffect($effectId) failed, track died")
         }
-        if (ret != 0) {
-            throw NativeTrackException("attachAuxEffect($effectId) failed: $ret")
-        }
+        return ret
     }
 
     private external fun attachAuxEffectInternal(ptr: Long, effectId: Int): Int
@@ -1490,14 +1647,17 @@ class NativeTrack(
         limit: Int
     )
 
-    fun write(buf: ByteBuffer, offset: Int?, size: Int?, blocking: Boolean): Long {
+    fun write(buf: ByteBuffer, offset: Int?, size: Int?, blocking: Boolean): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
         if (!buf.isDirect) {
-            return write(
+            val ret = write(
                 buf.array(), buf.arrayOffset() + (offset ?: buf.position()),
                 size ?: (buf.limit() - (offset ?: buf.position())), blocking
             )
+            if (ret > 0)
+                buf.position(buf.position() + ret)
+            return ret
         }
         // TODO replicate blockUntilOffloadDrain()
         val ret = try {
@@ -1508,17 +1668,12 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("write($buf / $blocking) failed", t)
         }
-        if (ret == -32L) {
-            myState = State.DEAD_OBJECT
-            throw NativeTrackException("write($buf / $blocking) failed, track died")
-        }
-        if (ret < 0) {
-            throw NativeTrackException("write($buf / $blocking) failed: $ret")
-        }
-        return ret
+        if (ret > 0 && offset == null)
+            buf.position(buf.position() + ret.toInt())
+        return handleWriteRet(ret)
     }
 
-    fun write(buf: ByteArray, offset: Int, size: Int?, blocking: Boolean): Long {
+    fun write(buf: ByteArray, offset: Int, size: Int?, blocking: Boolean): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
         // TODO replicate blockUntilOffloadDrain()
@@ -1527,17 +1682,10 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("write(${buf.size} / $blocking) failed", t)
         }
-        if (ret == -32L) {
-            myState = State.DEAD_OBJECT
-            throw NativeTrackException("write(${buf.size} / $blocking) failed, track died")
-        }
-        if (ret < 0) {
-            throw NativeTrackException("write(${buf.size} / $blocking) failed: $ret")
-        }
-        return ret
+        return handleWriteRet(ret)
     }
 
-    fun write(buf: FloatArray, offset: Int, size: Int?, blocking: Boolean): Long {
+    fun write(buf: FloatArray, offset: Int, size: Int?, blocking: Boolean): Int {
         if (myState != State.ALIVE)
             throw IllegalStateException("state is $myState")
         // TODO assert format is float
@@ -1547,18 +1695,21 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("write(${buf.size} / $blocking) failed", t)
         }
-        if (ret == -32L) {
-            myState = State.DEAD_OBJECT
-            throw NativeTrackException("write(${buf.size} / $blocking) failed, track died")
-        }
-        if (ret < 0) {
-            throw NativeTrackException("write(${buf.size} / $blocking) failed: $ret")
-        }
-        return ret
+        return handleWriteRet(ret)
     }
 
-    fun write(buf: ByteArray, offset: Int, size: Int?, blocking: Boolean, timestamp: Long): Long {
+    fun write(buf: ByteBuffer, offset: Int?, size: Int?, blocking: Boolean, timestamp: Long): Int {
         TODO("Implement HW_AV_SYNC write API")
+    }
+
+    private fun handleWriteRet(ret: Long): Int {
+        var ret = ret
+        if (ret == DEAD_OBJECT.toLong() || ret == NO_INIT) {
+            myState = State.DEAD_OBJECT
+        }
+        if (ret == WOULD_BLOCK)
+            ret = 0L
+        return ret.toInt()
     }
 
     private external fun writeInternal(
@@ -1603,6 +1754,7 @@ class NativeTrack(
         return proxy!!.createVolumeShaper(config)
     }
 
+    @JvmName("getUnderrunFrames")
     fun getUnderrunFrames(): UInt {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
@@ -1623,7 +1775,7 @@ class NativeTrack(
         } catch (t: Throwable) {
             throw NativeTrackException("failed to set parameters $params", t)
         }
-        if (ret == -32) {
+        if (ret == DEAD_OBJECT) {
             myState = State.DEAD_OBJECT
             throw NativeTrackException("setParameters() failed, track died")
         }
@@ -1656,26 +1808,32 @@ class NativeTrack(
         }
     }
 
+    // alias to match android.media.AudioTrack
+    @RequiresApi(Build.VERSION_CODES.P)
+    fun setPresentation(presentation: AudioPresentation) = selectPresentation(presentation)
+
     /**
-     * Retrieve current position in milliseconds (`out[0]`) and anchor realtime in nanoseconds (`out[1]`).
+     * Retrieve current position in frames and anchor realtime in nanoseconds.
      */
-    fun getTimestamp(out: LongArray) {
-        if (out.size != 2)
-            throw IllegalArgumentException("wrong size for getTimestamp: ${out.size}")
+    fun getTimestamp(out: AudioTimestamp): Boolean {
         if (myState == State.RELEASED)
             throw IllegalStateException("state is $myState")
+        // It's unfortunate, but we have to either create garbage every time or use synchronized
+        val temp = LongArray(2)
         val ret = try {
-            getTimestampInternal(ptr, out)
+            getTimestampInternal(ptr, temp)
         } catch (t: Throwable) {
             throw NativeTrackException("failed to get timestamps", t)
         }
-        if (ret == -32) {
+        if (ret == DEAD_OBJECT) {
             myState = State.DEAD_OBJECT
-            throw NativeTrackException("getTimestamp() failed, track died")
         }
         if (ret != 0) {
-            throw NativeTrackException("getTimestamp() failed: $ret")
+            return false
         }
+        out.framePosition = temp[0]
+        out.nanoTime = temp[1]
+        return true
     }
 
     private external fun getTimestampInternal(ptr: Long, out: LongArray): Int
@@ -1818,90 +1976,179 @@ class NativeTrack(
         ALIVE, // ready to use
     }
 
-    interface Callback {
-        fun onUnderrun()
-        fun onMarker(markerPosition: Int)
-        fun onNewPos(newPos: Int)
-        fun onStreamEnd()
-        fun onNewIAudioTrack()
-        fun onNewTimestamp(timestampMs: Int, timeNanoSec: Long)
-        fun onLoopEnd(loopsRemaining: Int)
-        fun onBufferEnd()
-        fun onMoreData(frameCount: Long, buffer: ByteBuffer): Long // ret = bytes written
-        fun onCanWriteMoreData(frameCount: Long, sizeBytes: Long)
-        fun onRoutingChanged()
-        fun onCodecFormatChanged(metadata: AudioMetadataReadMap?)
+    fun interface OnRoutingChangedListener {
+        fun onRoutingChanged(router: NativeTrack)
     }
 
-    @Volatile
-    var cb: Callback? = null
+    interface OnPlaybackPositionUpdateListener {
+        fun onMarkerReached(track: NativeTrack, markerPosition: Int)
+        fun onPeriodicNotification(track: NativeTrack, newPos: Int)
+    }
+
+    interface StreamEventCallback {
+        fun onDataRequest(track: NativeTrack, frameCount: Long, sizeBytes: Long)
+        fun onTearDown(track: NativeTrack)
+        fun onPresentationEnded(track: NativeTrack)
+    }
+
+    private val mPlaybackPositionListeners: ArrayMap<OnPlaybackPositionUpdateListener, Handler?> =
+        ArrayMap<OnPlaybackPositionUpdateListener, Handler?>()
+
+    fun addOnPlaybackPositionUpdateListener(listener: OnPlaybackPositionUpdateListener?, handler: Handler?) {
+        if (listener != null && !mPlaybackPositionListeners.containsKey(listener)) {
+            synchronized(mPlaybackPositionListeners) {
+                mPlaybackPositionListeners.put(listener, handler)
+            }
+        }
+    }
+
+    fun removeOnPlaybackPositionUpdateListener(listener: OnPlaybackPositionUpdateListener?) {
+        synchronized(mPlaybackPositionListeners) {
+            if (mPlaybackPositionListeners.containsKey(listener)) {
+                mPlaybackPositionListeners.remove(listener)
+            }
+        }
+    }
+
+    private inline fun <T> runCallbacks(listeners: ArrayMap<T, Handler?>,
+                                        crossinline callback: (T) -> Unit) {
+        val listeners = synchronized(listeners) { listeners.entries }
+        listeners.forEach { (listener, handler) ->
+            if (handler != null)
+                handler.post { callback(listener) }
+            else callback(listener)
+        }
+    }
 
     // called from native, on callback thread (not main thread!)
     private fun onUnderrun() {
-        cb?.onUnderrun()
+        // TODO: not impl'ed for now, can be done later if needed...
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onMarker(markerPosition: Int) {
-        cb?.onMarker(markerPosition)
+        runCallbacks(mPlaybackPositionListeners) {
+            it.onMarkerReached(this, markerPosition)
+        }
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onNewPos(newPos: Int) {
-        cb?.onNewPos(newPos)
+        runCallbacks(mPlaybackPositionListeners) {
+            it.onPeriodicNotification(this, newPos)
+        }
+    }
+
+    private val mStreamEventCallbacks: ArrayMap<StreamEventCallback, Handler?> =
+        ArrayMap<StreamEventCallback, Handler?>()
+
+    fun registerStreamEventCallback(listener: StreamEventCallback?, handler: Handler?) {
+        if (listener != null && !mStreamEventCallbacks.containsKey(listener)) {
+            synchronized(mStreamEventCallbacks) {
+                mStreamEventCallbacks.put(listener, handler)
+            }
+        }
+    }
+
+    fun unregisterStreamEventCallback(listener: StreamEventCallback?) {
+        synchronized(mStreamEventCallbacks) {
+            if (mStreamEventCallbacks.containsKey(listener)) {
+                mStreamEventCallbacks.remove(listener)
+            }
+        }
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onStreamEnd() {
-        cb?.onStreamEnd()
+        runCallbacks(mStreamEventCallbacks) {
+            it.onPresentationEnded(this)
+        }
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onNewIAudioTrack() {
-        cb?.onNewIAudioTrack()
+        runCallbacks(mStreamEventCallbacks) {
+            it.onTearDown(this)
+        }
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onNewTimestamp(timestampMs: Int, timeNanoSec: Long) {
-        cb?.onNewTimestamp(timestampMs, timeNanoSec)
+        // TODO: not impl'ed for now, can be done later if needed...
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onLoopEnd(loopsRemaining: Int) {
-        cb?.onLoopEnd(loopsRemaining)
+        // TODO: not impl'ed for now, can be done later if needed...
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onBufferEnd() {
-        cb?.onBufferEnd()
+        // TODO: not impl'ed for now, can be done later if needed...
     }
 
     // called from native, on callback thread (not main thread!)
     // Be careful to not hold a reference to the buffer after returning. It will immediately be invalid!
     private fun onMoreData(frameCount: Long, buffer: ByteBuffer): Long {
-        cb?.let {
-            return it.onMoreData(frameCount, buffer)
-        }
+        // TODO: not impl'ed for now, can be done later if needed...
         return 0 // amount of bytes written
     }
 
     // called from native, on callback thread (not main thread!)
     private fun onCanWriteMoreData(frameCount: Long, sizeBytes: Long) {
-        cb?.onCanWriteMoreData(frameCount, sizeBytes)
+        runCallbacks(mStreamEventCallbacks) {
+            it.onDataRequest(this, frameCount, sizeBytes)
+        }
+    }
+
+    private val resetAudioPortGenerationMethod by lazy {
+        AudioManager::class.java.getMethod("resetAudioPortGeneration")
     }
 
     // called from native, on random thread (not main thread!) - only M for now, N+ uses proxy
     private fun onAudioDeviceUpdate(ioHandle: Int, routedDevices: IntArray) {
-        cb?.onRoutingChanged()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) { // handled by proxy on N+
+            try {
+                resetAudioPortGenerationMethod.invoke(null)
+            } catch (e: Exception) {
+                Log.w(TAG, "failed to reset generation of audio ports", e)
+            }
+        }
+        handleRoutingChanged()
     }
 
     // called on audio track initialization thread, most often main thread but not always
     private fun onRoutingChanged() {
-        cb?.onRoutingChanged()
+        handleRoutingChanged()
+    }
+
+    private val mRoutingChangeListeners: ArrayMap<OnRoutingChangedListener, Handler?> =
+        ArrayMap<OnRoutingChangedListener, Handler?>()
+
+    fun addOnRoutingChangedListener(listener: OnRoutingChangedListener?, handler: Handler?) {
+        if (listener != null && !mRoutingChangeListeners.containsKey(listener)) {
+            synchronized(mRoutingChangeListeners) {
+                mRoutingChangeListeners.put(listener, handler)
+            }
+        }
+    }
+
+    fun removeOnRoutingChangedListener(listener: OnRoutingChangedListener?) {
+        synchronized(mRoutingChangeListeners) {
+            if (mRoutingChangeListeners.containsKey(listener)) {
+                mRoutingChangeListeners.remove(listener)
+            }
+        }
+    }
+
+    private fun handleRoutingChanged() {
+        runCallbacks(mRoutingChangeListeners) {
+            it.onRoutingChanged(this)
+        }
     }
 
     // called on random thread
     private fun onCodecFormatChanged(metadata: AudioMetadataReadMap?) {
-        cb?.onCodecFormatChanged(metadata)
+        // TODO: not impl'ed for now, can be done later if needed...
     }
 }

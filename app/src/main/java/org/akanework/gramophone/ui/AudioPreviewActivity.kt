@@ -1,3 +1,20 @@
+/*
+ *     Copyright (C) 2024 The Gramophone authors
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.ui
 
 import android.content.Intent
@@ -16,6 +33,7 @@ import android.widget.ImageView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.app.ActivityCompat
@@ -28,6 +46,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.Log
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -116,6 +135,7 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
         }
     }
 
+    @OptIn(ExperimentalApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -166,9 +186,9 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
             GramophoneRenderFactory(
                 this,
                 rgAp, {}, {})
-                .setPcmEncodingRestrictionLifted(true)
+                .setEnableHighResolutionPcmOutput(true)
                 .setEnableDecoderFallback(true)
-                .setEnableAudioTrackPlaybackParams(true)
+                .setEnableAudioOutputPlaybackParameters(true)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER),
             GramophoneMediaSourceFactory(
                 DefaultDataSource.Factory(this),
@@ -355,6 +375,8 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                             val lp = Uri.decode(uri.lastPathSegment)
                             if (lp?.toUri()?.scheme == "file") { // Let's try our luck! Material Files supports this
                                 fileUri = lp.toUri()
+                                if (!fileUri.toFile().canRead())
+                                    fileUri = null // probably .nomedia?
                             } else { // ¯\_(ツ)_/¯
                                 val pfd = try {
                                     contentResolver.openFileDescriptor(uri, "r")

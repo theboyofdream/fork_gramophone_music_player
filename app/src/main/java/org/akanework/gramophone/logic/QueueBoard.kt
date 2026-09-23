@@ -1,3 +1,21 @@
+/*
+ *     Copyright (C) 2025 OuterTune Project
+ *                   2026 The Gramophone contributors
+ *
+ *     Gramophone is free software: you can redistribute it and/or modify
+ *     it under the terms of the GNU General Public License as published by
+ *     the Free Software Foundation, either version 3 of the License, or
+ *     (at your option) any later version.
+ *
+ *     Gramophone is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ *     You should have received a copy of the GNU General Public License
+ *     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package org.akanework.gramophone.logic
 
 import android.content.Context
@@ -11,26 +29,39 @@ import androidx.core.os.BundleCompat
 import androidx.media3.common.BundleListRetriever
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.Player.REPEAT_MODE_OFF
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.akanework.gramophone.logic.utils.CircularShuffleOrder
 import org.akanework.gramophone.logic.utils.MediaItemList
-import kotlin.random.Random
 
-private const val QUEUE_EXPIRY_MS = 10 * 36000000 // 10 hrs
+private const val QUEUE_EXPIRY_MS = 10 * 3600000 // 10 hrs
 
 /**
- * Multiple queues manager.
+ * Multiple queues manager for inactive queues.
  *
- * Queues are ordered most recent modification,
+ * Queue pinning:
+ *  See [MultiQueueObject.expiry] for more details.
+ *
+ *  The active queue is managed by [org.akanework.gramophone.logic.utils.exoplayer.EndedWorkaroundPlayer].
+ *  When an active queue is unpinned, it will not be eligible for deletion. The expiry will be renewed
+ *  once it becomes an inactive queue.
+ *
+ * Queue originality status:
+ *  An original queue is media list is untouched from a source (ex. folder, playlist, etc.).
+ *
+ *  A non-original queue is any queue the user has intentionally created or modified. These queues will not be automatically replaced.
  */
 class QueueBoard(
     private val player: GramophonePlaybackService,
-    val masterQueues: MutableList<MultiQueueObject> = mutableListOf(),
     queues: MutableList<MultiQueueObject> = ArrayList(),
 ) {
-    private val QUEUE_DEBUG = true
+    private val QUEUE_DEBUG = true // TODO: disable when done
     private val TAG = QueueBoard::class.simpleName.toString()
+
+    val masterQueues: MutableList<MultiQueueObject> = mutableListOf()
 
     init {
         masterQueues.clear()
@@ -46,15 +77,16 @@ class QueueBoard(
      */
 
     /**
-     * Push this queue to the player, and save the player queue back to QueueBoard.
+     * Load this queue to the player, and save the player's queue back to QueueBoard.
      *
-     * @param index
+     * @param index Index of the queue in [masterQueues]
+     * @param startIndex Optional start position override for the queue loaded into the player
      */
     fun commitQueue(
         index: Int,
         startIndex: Int = -1
     ) {
-        Log.v(TAG, "commitQueue() called")
+        Log.d(TAG, "commitQueue() called")
         if (index < 0 || index >= masterQueues.size) {
             Log.w(
                 TAG,
@@ -67,79 +99,92 @@ class QueueBoard(
         if (startIndex != -1) {
             new = new.copy(startIndex = startIndex, startPositionMs = C.TIME_UNSET)
         }
-        setCurrQueue(new)
+        val plr = player.endedWorkaroundPlayer!!
+        if (QUEUE_DEBUG)
+            Log.d(
+                TAG,
+                "Setting current queue; $new; ids: ${plr.currentMediaItem?.mediaId}, ${new.queue[new.startIndex].mediaId}"
+            )
+        plr.setMediaItems(
+            new.queue, new.startIndex,
+            new.startPositionMs,
+            new.title, new.expiry == null, new.isOriginal, new.ended, new.repeatMode,
+            new.shuffleModeEnabled, new.shuffleOrder, null,
+        )
     }
 
     /**
-     * Pin a queue.
+     * Pin a queue to the QueueBoard. This queue will no longer be eligible for automatic removal.
      *
      * @param index Queue index.
      */
     fun pinQueue(index: Int): Boolean {
-        masterQueues[index].expiry.value = null
+        masterQueues[index].expiry = null
         return true
     }
 
     /**
-     * Unpin a queue.
+     * Unpin a queue from the QueueBoard. This queue will be eligible for automatic removal after
+     * the expiry threshold.
      *
      * @param index Queue index.
      * @return true if the operation is successful, otherwise false
      */
-    fun unpinQueue(index: Int): Long {
-        if (masterQueues.isEmpty()) return -1L
-        val expiry = System.currentTimeMillis() + QUEUE_EXPIRY_MS
-        masterQueues[index].expiry.value = System.currentTimeMillis() + QUEUE_EXPIRY_MS
-        return expiry
+    fun unpinQueue(index: Int): Boolean {
+        if (masterQueues.isEmpty()) return false
+        masterQueues[index].expiry = System.currentTimeMillis() + QUEUE_EXPIRY_MS
+        return true
     }
 
     /**
      * Remove expired queues from the QueueBoard
      */
-    fun trimQB() {
+    fun trimAndSaveQB() {
         val currentTimeMillis = System.currentTimeMillis()
         val newQueueList = masterQueues.filter {
-            it.expiry.value == null || it.expiry.value!! > currentTimeMillis
+            it.expiry == null || it.expiry!! > currentTimeMillis
         }
         masterQueues.clear()
         masterQueues.addAll(newQueueList)
+        /*
+        val queues = (masterQueues + player.endedWorkaroundPlayer!!.getActiveQueue()).map { it.id }
+        CoroutineScope(Dispatchers.IO).launch {
+            player.database.syncQueues(queues)
+        }
+         */
     }
 
 
     /**
-     * Add a new queue to the QueueBoard, or add to a queue if it exists.
+     * Add a new queue to the QueueBoard, or replace an existing queue if it already exists. Queues
+     * are determined to be equivalent if [MultiQueueObject.title] is the same and [MultiQueueObject.isOriginal]
+     * is false.
      *
-     * Depending on the state of the QueueBoard and player, this result in differing behaviour:
-     *
-     * Queue already exists:
-     * 1. Contents (by songID) are a perfect match: Update metadata (currentMediaItemIndex, shuffle
-     *      order).
-     * 2. Contents are different and given "isOriginal" flag: Update metadata, replace all existing
-     *      queue content with new content.
-     * 3. Contents are different: Update metadata, add all new content to the end of the old content.
-     *      Queue title gets a "+" suffix if not already present.
-     *
-     * Queue does not exist:
-     * 4. Queue is added as a new queue.
-     *
-     *
-     * @param title Title (effective uid) of the queue.
+     * @param queueId
+     * @param title Title of the queue.
      * @param mediaList Media items to add to the queue.
-     * @param player
-     * @param shuffled media3 isShuffleEnabled
-     * @param mediaItemIndex media3 startIndex
+     * @param mediaItemIndex Start index.
+     * @param startPositionMs Start position.
+     * @param shouldPin Specify a timestamp to indicate when the queue is expires, otherwise null
+     *  for a queue that never expires.
+     * @param isOriginal false if the user has modified the queue, and this queue is not replaceable.
+     * @param repeatMode
+     * @param shuffleOrder A shuffle order will enable shuffling of the queue, otherwise null disables it.
+     * @param ended
      *
      */
     fun addQueue(
+        queueId: Long,
         title: String,
         mediaList: List<MediaItem>,
         mediaItemIndex: Int = 0,
         startPositionMs: Long?,
         shouldPin: Boolean,
         isOriginal: Boolean,
+        repeatMode: (@Player.RepeatMode Int)?,
         shuffleOrder: CircularShuffleOrder.Persistent?,
         ended: Boolean,
-    ): MultiQueueObject {
+    ) {
         if (QUEUE_DEBUG)
             Log.d(TAG, "Queue data: $masterQueues")
         if (QUEUE_DEBUG)
@@ -147,47 +192,65 @@ class QueueBoard(
                 TAG, "Adding to queue \"$title\". medialist size = ${mediaList.size}. " +
                         "replace/startIndex = $mediaItemIndex"
             )
+        if (mediaList.isEmpty()) return //throw IllegalArgumentException("Media list cannot be empty")
 
-        // Title is (effectively) uid
-        masterQueues.removeAll { it.title.trimEnd() == title }
+        masterQueues.removeAll { it.isOriginal && it.title.trimEnd() == title }
 
         // (4) add new queue
         if (QUEUE_DEBUG)
             Log.d(TAG, "Adding: (4) new queue")
 
         val newQueue = MultiQueueObject(
-            id = Random.nextLong(),
+            id = queueId,
             index = -1,
             title = title,
-            expiry = MutableStateFlow(if (!shouldPin) System.currentTimeMillis() + QUEUE_EXPIRY_MS else null),
+            expiry = if (!shouldPin) System.currentTimeMillis() + QUEUE_EXPIRY_MS else null,
             queue = ArrayList(mediaList),
             startIndex = mediaItemIndex,
             startPositionMs = startPositionMs ?: C.TIME_UNSET,
-            repeatMode = player.endedWorkaroundPlayer!!.repeatMode,
+            repeatMode = repeatMode ?: 0,
             shuffleOrder = shuffleOrder,
             ended = ended,
             isOriginal = isOriginal,
         )
 
-        masterQueues.bubbleUp(newQueue)
-        return newQueue
+        addQueue(newQueue)
+    }
+
+    fun addQueue(mq: MultiQueueObject) {
+
+        if (QUEUE_DEBUG) {
+            Log.d(
+                TAG, "Adding to queue \"${mq.title}\". medialist size = ${mq.queue.size}. " +
+                        "replace/startIndex = ${mq.startIndex}"
+            )
+        }
+        if (mq.queue.isEmpty()) return //throw IllegalArgumentException("Media list cannot be empty")
+
+        masterQueues.removeAll { it.isOriginal && it.title.trimEnd() == mq.title }
+        masterQueues.bubbleUp(mq)
+        trimAndSaveQB()
     }
 
     /**
      * Deletes a queue.
      *
-     * When deleting the active queue, the last inactive queue is loaded. When the active queue is
-     * the only queue, playback is stopped.
-     *
-     * @param index
+     * @param id queueId.
      * @return true if the deletion is successful, otherwise false.
      */
-    fun deleteQueue(index: Int): Boolean {
+    fun deleteQueue(id: Long): Boolean {
+        val mq = masterQueues.find { it.id == id }
+        val index = mq?.let {
+            masterQueues.indexOf(it)
+        }
         if (QUEUE_DEBUG)
             Log.d(TAG, "DELETING QUEUE AT INDEX: $index")
 
+        if (index == null) return false
+
         try {
             masterQueues.removeAt(index)
+            trimAndSaveQB()
         } catch (e: IndexOutOfBoundsException) {
             Log.w(TAG, e.message, e)
             return false
@@ -197,7 +260,7 @@ class QueueBoard(
     }
 
     /**
-     * Move a queue in masterQueues
+     * Reorder a queue.
      *
      * @param fromIndex
      * @param toIndex
@@ -221,28 +284,61 @@ class QueueBoard(
      */
     fun getInactiveQueues() = masterQueues.map {
         it.copy(
-            queue = ArrayList(),
             fakeQueueSize = it.getSize(),
             fakeQueueLength = it.getDuration(),
         )
     }
 
+
     /**
-     * Get a single queue (or several queues in the future)
+     * Get a single queue given a queue id.
      */
-    fun getQueue(index: Int): List<MultiQueueObject> {
-        return listOfNotNull(
-            masterQueues.getOrNull(index)?.let {
-                it.copy(
-                    fakeQueueSize = it.getSize(),
-                    fakeQueueLength = it.getDuration()
-                )
-            }
-        )
+    fun getInactiveQueue(id: Long): MultiQueueObject? {
+        return masterQueues.firstOrNull { it.id == id }?.let {
+            it.copy(
+                fakeQueueSize = it.getSize(),
+                fakeQueueLength = it.getDuration()
+            )
+        }
     }
 
-    fun renameQueue(mq: MultiQueueObject, newName: String): Boolean {
-        if (masterQueues.any { it.title == newName }) {
+    /**
+     * Get a single queue given an index.
+     */
+    fun getInactiveQueue(index: Int): MultiQueueObject? {
+        return masterQueues.getOrNull(index)?.let {
+            it.copy(
+                fakeQueueSize = it.getSize(),
+                fakeQueueLength = it.getDuration()
+            )
+        }
+    }
+
+    /**
+     *
+     */
+    fun renameQueue(index: Int, newName: String, dryRun: Boolean): Boolean {
+        if (index >= masterQueues.size) return false
+        return renameQueue(masterQueues[index], newName, dryRun)
+    }
+
+    /**
+     * Rename a queue, if possible.
+     *
+     * Renaming a queue will set [MultiQueueObject.isOriginal] to false.
+     *
+     * @param mq
+     * @param newName
+     * @param dryRun Call this function with dryRun = true to test for if this rename action is
+     *  allowed, then call with dryRun = false to preceding with it. This prevents ui desync.
+     *
+     * For the time being, queues cannot have the same title, even if its allowed in the underlying
+     * codes. TODO(mq): re-evaluate later
+     */
+    fun renameQueue(mq: MultiQueueObject, newName: String, dryRun: Boolean): Boolean {
+        // If you rename a queue to "Folder1 (+)" and have a non-original queue named "Folder 1", then you will have 2 queues the same name
+        val plr = player.endedWorkaroundPlayer!!
+        if (plr.currentTitle == newName || masterQueues.any { it.title == newName }) {
             if (QUEUE_DEBUG)
                 Log.d(TAG, "Failed to rename queue to \"$newName\". Already exists")
             return false
@@ -250,12 +346,14 @@ class QueueBoard(
         val found = masterQueues.any { it == mq }
         if (found) {
             val oldIndex = masterQueues.indexOf(mq)
-            masterQueues[oldIndex] = masterQueues[oldIndex].copy(title = newName)
+            if (!dryRun) {
+                masterQueues[oldIndex] = masterQueues[oldIndex].copy(
+                    title = newName,
+                    isOriginal = false
+                )
+            }
             if (QUEUE_DEBUG)
                 Log.d(TAG, "Successfully renamed queue from \"${mq.title}\" to \"$newName\"")
-            return true
-        } else if (player.endedWorkaroundPlayer?.currentTitle == mq.title) {
-            player.endedWorkaroundPlayer!!.currentTitle = mq.title
             return true
         } else {
             if (QUEUE_DEBUG)
@@ -265,42 +363,12 @@ class QueueBoard(
     }
 
     /**
-     * Load a queue into the media player. This should be called on the main thread.
-     *
-     * @param mq Queue object
-     */
-    private fun setCurrQueue(
-        mq: MultiQueueObject
-    ) {
-        val plr = player.endedWorkaroundPlayer!!
-        if (QUEUE_DEBUG)
-            Log.d(
-                TAG,
-                "Setting current queue; $mq; ids: ${plr.currentMediaItem?.mediaId}, ${mq.queue[mq.startIndex].mediaId}"
-            )
-        val seed = mq.shuffleOrder
-        if (plr.nextShuffleOrder != null)
-            throw IllegalStateException("shuffleFactory was found orphaned")
-        plr.shuffleModeEnabled = mq.shuffleModeEnabled
-        plr.repeatMode = mq.repeatMode
-        plr.isEnded = mq.ended
-        plr.nextShuffleOrder = seed?.toFactory()
-        plr.setMediaItems(
-            mq.queue, mq.startIndex,
-            mq.startPositionMs,
-            mq.title, mq.expiry.value == null, mq.isOriginal
-        )
-        if (plr.nextShuffleOrder != null)
-            throw IllegalStateException("shuffleFactory was not consumed during restore")
-    }
-
-    /**
-     * Debug uses
+     * Debug uses. Simulate 2 hours of time passing.
      */
     fun age() {
         masterQueues.forEach {
-            if (it.expiry.value != null) {
-                it.expiry.value = it.expiry.value!! + 2L * 36000000L
+            if (it.expiry != null) {
+                it.expiry = it.expiry!! + 2L * 36000000L
             }
         }
     }
@@ -311,7 +379,7 @@ class QueueBoard(
 }
 
 /**
- * Insert (or move) this queue to the last spot.
+ * Insert (or move) this queue to the last spot in the QueueBoard
  */
 private fun MutableList<MultiQueueObject>.bubbleUp(mq: MultiQueueObject) {
     remove(mq)
@@ -323,6 +391,9 @@ private fun MutableList<MultiQueueObject>.bubbleUp(mq: MultiQueueObject) {
 
 
 /**
+ * A representation of a queue
+ *
+ * @param
  * @param title Queue title (and UID)
  * @param queue List of media items
  */
@@ -330,7 +401,16 @@ data class MultiQueueObject(
     val id: Long, // queue uid
     var index: Int, // order of queue
     var title: String,
-    var expiry: MutableStateFlow<Long?>,
+    /**
+     * Expiry denotes when this queue is eligible for auto removal; these events happen when
+     * triggered by the user, or automatically on QueueBoard initialization, or when the user switches any queue.
+     *
+     * Active queues will never be automatically removed, however, the pin state does not
+     * automatically change. When a pinned queue becomes an active queue, it will remain pinned when
+     * it becomes inactive. If said queue is unpinned, then it will renew its expiry time when it
+     * becomes inactive.
+     */
+    var expiry: Long?,
     /**
      * The order of songs are dynamic. This should not be accessed from outside QueueBoard.
      */
@@ -338,17 +418,17 @@ data class MultiQueueObject(
 
     var startIndex: Int = C.INDEX_UNSET, // position of current song
     var startPositionMs: Long = C.TIME_UNSET,
-    var repeatMode: Int = 0,
+    var repeatMode: @Player.RepeatMode Int = 0,
 
     var shuffleOrder: CircularShuffleOrder.Persistent? = null,
     var ended: Boolean = false,
-    var isOriginal: Boolean = true,
+    val isOriginal: Boolean = true,
 
     private var fakeQueueSize: Int? = null,
     private var fakeQueueLength: Long? = null
 ) {
     override fun toString() =
-        "$title ($id) startIndex=$startIndex, startPositionMs=$startPositionMs, repeatMode=$repeatMode, shuffleModeEnabled=$shuffleModeEnabled, ended=$ended, mediaItems_size=${queue.size}, expiry=${expiry.value}"
+        "$title ($id) startIndex=$startIndex, startPositionMs=$startPositionMs, repeatMode=$repeatMode, shuffleModeEnabled=$shuffleModeEnabled, ended=$ended, mediaItems_size=${queue.size}, expiry=$expiry"
 
     val shuffleModeEnabled
         get() = shuffleOrder != null
@@ -383,8 +463,6 @@ data class MultiQueueObject(
         }
     }
 
-    fun getTitleForUi() = if (isOriginal) title else "$title (+)" // TODO(MQ) i18n
-
     /**
      * Get the length of the queue
      */
@@ -402,14 +480,14 @@ data class MultiQueueObject(
             putLong("id", id)
             putInt("index", index)
             putString("title", title)
-            putString("expiry", expiry.value?.toString())
+            putString("expiry", expiry.toString())
 
             putBinder("queue", binder)
 
             putInt("startIndex", startIndex)
             putLong("startPositionMs", startPositionMs)
             putInt("repeatMode", repeatMode)
-            putBoolean("shuffleModeEnabled", shuffleModeEnabled)
+
             putBoolean("ended", ended)
             putBoolean("isOriginal", isOriginal)
             putParcelable("shuffleOrder", shuffleOrder)
@@ -431,7 +509,7 @@ data class MultiQueueObject(
                 id = bundle.getLong("id"),
                 index = bundle.getInt("index"),
                 title = bundle.getString("title") ?: "",
-                expiry = MutableStateFlow(bundle.getString("expiry")?.toLongOrNull()),
+                expiry = bundle.getString("expiry")?.toLongOrNull(),
                 queue = queue,
 
                 startIndex = bundle.getInt("startIndex", C.INDEX_UNSET),
@@ -439,8 +517,10 @@ data class MultiQueueObject(
                 repeatMode = bundle.getInt("repeatMode", REPEAT_MODE_OFF),
                 ended = bundle.getBoolean("ended"),
                 isOriginal = bundle.getBoolean("isOriginal"),
-                shuffleOrder = BundleCompat.getParcelable(bundle, "shuffleOrder",
-                    CircularShuffleOrder.Persistent::class.java),
+                shuffleOrder = BundleCompat.getParcelable(
+                    bundle, "shuffleOrder",
+                    CircularShuffleOrder.Persistent::class.java
+                ),
 
                 fakeQueueSize = bundle.getInt("fakeQueueSize", C.INDEX_UNSET)
                     .let { if (it == C.INDEX_UNSET) null else it },
@@ -461,7 +541,8 @@ class MultiQueueList(val list: List<MultiQueueObject>) : Binder() {
     }
 
     companion object {
-        fun getList(binder: IBinder): List<MultiQueueObject> {
+        fun getList(binder: IBinder?): List<MultiQueueObject> {
+            if (binder == null) return emptyList()
             if (binder is MultiQueueList) {
                 return binder.list
             }
