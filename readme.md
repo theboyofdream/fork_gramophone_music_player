@@ -31,6 +31,23 @@ A sane music player built with media3 and the Material Design library that is fo
 - Full support for ReplayGain 2.0
 - Support for system/third-party Equalizer apps
 
+## Fork Extras
+> Changes by [@theboyofdream](https://github.com/theboyofdream) on top of upstream Gramophone.
+
+- Enhanced sorting
+  - Sort by file size and duration
+  - ASC/DESC sort order toggle
+  - Persistent sort preferences
+- Advanced filtering
+  - Filter songs by file size and duration using range sliders
+  - Filter badge indicator when filters are active
+  - Persistent filter preferences
+- Playback improvements
+  - Automatically pauses playback when volume reaches zero
+- Stability improvements
+  - StrictMode compliance fixes
+  - ViewPager2 adapter state restoration fixes
+
 ## Screenshots
 | ![Screenshot 1](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_1.jpg) | ![Screenshot 2](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_2.jpg) | ![Screenshot 3](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_3.jpg) |
 |------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|

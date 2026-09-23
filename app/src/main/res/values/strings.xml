@@ -1268,6 +1268,9 @@ supporting local search. This string is displayed in the search bar when using G
     <!-- Shown in system's file upload dialog, used by browsers or similar, to allow user to choose
      a song using the familiar Gramophone user interface. App icon is next to it -->
     <string name="picker_activity">Choose music track</string>
+    <string name="selected_count">%1$d selected</string>
+    <string name="select_all">Select all</string>
+    <string name="select">Select</string>
     <!-- Shown in system's file upload dialog, used by browsers or similar, to allow user to choose
      a playlist using the familiar Gramophone user interface. App icon is next to it -->
     <string name="playlist_picker_activity">Choose playlist</string>

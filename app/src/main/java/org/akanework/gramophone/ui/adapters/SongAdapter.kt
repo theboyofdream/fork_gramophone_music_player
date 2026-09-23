@@ -214,7 +214,100 @@ class SongAdapter(
         return if (showFileNames) item.getFile()?.name else super.titleOf(item)
     }
 
+    val selectedItems = mutableSetOf<MediaItem>()
+    var selectionMode = false
+    private var actionMode: androidx.appcompat.view.ActionMode? = null
+
+    fun toggleSelection(item: MediaItem, position: Int) {
+        if (selectedItems.contains(item)) {
+            selectedItems.remove(item)
+        } else {
+            selectedItems.add(item)
+        }
+        notifyItemChanged(position)
+
+        if (selectedItems.isEmpty()) {
+            finishSelectionMode()
+        } else {
+            actionMode?.title = context.getString(R.string.selected_count, selectedItems.size)
+        }
+    }
+
+    fun startSelectionMode(initialItem: MediaItem? = null) {
+        if (selectionMode) return
+        selectionMode = true
+        selectedItems.clear()
+        if (initialItem != null) {
+            selectedItems.add(initialItem)
+        }
+        notifyDataSetChanged()
+
+        actionMode = (getActivity() as? AppCompatActivity)?.startSupportActionMode(object : androidx.appcompat.view.ActionMode.Callback {
+            override fun onCreateActionMode(mode: androidx.appcompat.view.ActionMode, menu: android.view.Menu): Boolean {
+                mode.menuInflater.inflate(R.menu.selection_menu, menu)
+                mode.title = context.getString(R.string.selected_count, selectedItems.size)
+                return true
+            }
+
+            override fun onPrepareActionMode(mode: androidx.appcompat.view.ActionMode, menu: android.view.Menu): Boolean {
+                return false
+            }
+
+            override fun onActionItemClicked(mode: androidx.appcompat.view.ActionMode, menuItem: android.view.MenuItem): Boolean {
+                return when (menuItem.itemId) {
+                    R.id.action_add_to_playlist -> {
+                        if (selectedItems.isNotEmpty()) {
+                            mainActivity.addToPlaylistDialog(selectedItems.toList())
+                            finishSelectionMode()
+                        }
+                        true
+                    }
+                    R.id.action_select_all -> {
+                        getSongList().let {
+                            selectedItems.clear()
+                            selectedItems.addAll(it)
+                            notifyDataSetChanged()
+                            mode.title = context.getString(R.string.selected_count, selectedItems.size)
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+
+            override fun onDestroyActionMode(mode: androidx.appcompat.view.ActionMode) {
+                selectionMode = false
+                selectedItems.clear()
+                actionMode = null
+                notifyDataSetChanged()
+            }
+        })
+    }
+
+    fun finishSelectionMode() {
+        actionMode?.finish()
+        actionMode = null
+        selectionMode = false
+        selectedItems.clear()
+        notifyDataSetChanged()
+    }
+
+    override fun onLongClick(item: MediaItem, position: Int): Boolean {
+        if (isSubFragment == R.id.songs) return false
+        if (!selectionMode) {
+            startSelectionMode(item)
+            return true
+        } else {
+            toggleSelection(item, position)
+            return true
+        }
+    }
+
     override fun onClick(item: MediaItem, position: Int) {
+        if (selectionMode) {
+            toggleSelection(item, position)
+            return
+        }
         if (isSubFragment == R.id.songs) {
             (context as SongPickerActivity).onSelected(item)
             return
@@ -337,6 +430,11 @@ class SongAdapter(
                     true
                 }
 
+                R.id.select -> {
+                    startSelectionMode(item)
+                    true
+                }
+
                 else -> false
             }
         }
@@ -358,8 +456,18 @@ class SongAdapter(
             }
         } else {
             super.onBindViewHolder(holder, position, payloads)
-            if (currentMediaItem == null || getSongList()[position].mediaId != currentMediaItem)
-                return
+            if (selectionMode && position < getSongList().size && selectedItems.contains(getSongList()[position])) {
+            holder.itemView.setBackgroundColor(
+                com.google.android.material.color.MaterialColors.getColor(
+                    holder.itemView,
+                    com.google.android.material.R.attr.colorSecondaryContainer
+                )
+            )
+        } else {
+            holder.itemView.background = null
+        }
+        if (currentMediaItem == null || getSongList()[position].mediaId != currentMediaItem)
+            return
         }
         holder.nowPlaying.setImageDrawable(
             NowPlayingDrawable(context)

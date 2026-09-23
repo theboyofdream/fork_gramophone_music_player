@@ -415,11 +415,27 @@ abstract class BaseAdapter<T : Any>(
             holder.trackCount!!.text = trackCountOf(item)
             if (hasMenu) {
                 holder.itemView.setOnLongClickListener {
+                    val pos = holder.bindingAdapterPosition
+                    if (pos != RecyclerView.NO_POSITION && pos < getItemCount()) {
+                        if (onLongClick(item, pos)) {
+                            return@setOnLongClickListener true
+                        }
+                    }
                     val popupMenu = PopupMenu(it.context, it)
                     onMenu(item, popupMenu)
                     popupMenu.show()
                     true
                 }
+            }
+        } else if (hasMenu) {
+            holder.itemView.setOnLongClickListener {
+                val pos = holder.bindingAdapterPosition
+                if (pos != RecyclerView.NO_POSITION && pos < getItemCount()) {
+                    if (onLongClick(item, pos)) {
+                        return@setOnLongClickListener true
+                    }
+                }
+                false
             }
         }
         holder.title.text = titleOf(item) ?: virtualTitleOf(item)
@@ -554,6 +570,8 @@ abstract class BaseAdapter<T : Any>(
     }
 
     protected abstract fun onClick(item: T, position: Int)
+
+    open fun onLongClick(item: T, position: Int): Boolean = false
     protected abstract fun onMenu(item: T, popupMenu: PopupMenu)
     private fun isPinned(item: T): Boolean {
         return titleOf(item) == null
