@@ -11,6 +11,8 @@
         <item name="system_app_widget_background_radius">28dp</item>
         <item name="system_app_widget_inner_radius">20dp</item>
         <item name="previewPlayerElevation">1dp</item>
+        <item name="windowActionModeOverlay">true</item>
+        <item name="android:windowActionModeOverlay">true</item>
     </style>
 
     <style name="PreV31.Theme.Gramophone" parent="Base.Theme.Gramophone">
