@@ -123,19 +123,20 @@ class PreviewBottomSheet(
         onPlaybackStateChanged(instance?.playbackState ?: Player.STATE_IDLE)
     }
 
+    private var currentPlayTag: Int = 0
+
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (playbackState == Player.STATE_BUFFERING) return
-        val myTag = bottomSheetPreviewControllerButton.getTag(R.id.play_next) as Int?
-        if (instance?.isPlaying == true && myTag != 1) {
+        if (instance?.isPlaying == true && currentPlayTag != 1) {
             bottomSheetPreviewControllerButton.icon =
                 AppCompatResources.getDrawable(context, R.drawable.play_anim)
             bottomSheetPreviewControllerButton.icon.startAnimation()
-            bottomSheetPreviewControllerButton.setTag(R.id.play_next, 1)
-        } else if (instance?.isPlaying == false && myTag != 2) {
+            currentPlayTag = 1
+        } else if (instance?.isPlaying == false && currentPlayTag != 2) {
             bottomSheetPreviewControllerButton.icon =
                 AppCompatResources.getDrawable(context, R.drawable.pause_anim)
             bottomSheetPreviewControllerButton.icon.startAnimation()
-            bottomSheetPreviewControllerButton.setTag(R.id.play_next, 2)
+            currentPlayTag = 2
         }
     }
 

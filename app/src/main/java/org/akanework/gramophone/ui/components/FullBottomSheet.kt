@@ -1616,9 +1616,11 @@ class FullBottomSheet
         onPlaybackStateChanged(instance?.playbackState ?: Player.STATE_IDLE)
     }
 
+    private var currentFullPlayTag: Int = 0
+
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (instance?.isPlaying == true) {
-            if (bottomSheetFullControllerButton.getTag(R.id.play_next) as Int? != 1) {
+            if (currentFullPlayTag != 1) {
                 bottomSheetFullControllerButton.icon =
                     AppCompatResources.getDrawable(
                         wrappedContext ?: context,
@@ -1628,7 +1630,7 @@ class FullBottomSheet
                     AppCompatResources.getDrawable(context, R.drawable.bg_play_anim)
                 bottomSheetFullControllerButton.icon.startAnimation()
                 bottomSheetFullControllerButton.background.startAnimation()
-                bottomSheetFullControllerButton.setTag(R.id.play_next, 1)
+                currentFullPlayTag = 1
             }
             if (!isUserTracking) {
                 progressDrawable.animate = true
@@ -1639,7 +1641,7 @@ class FullBottomSheet
             }
             currentCoverImage?.startRotation()
         } else if (playbackState != Player.STATE_BUFFERING) {
-            if (bottomSheetFullControllerButton.getTag(R.id.play_next) as Int? != 2) {
+            if (currentFullPlayTag != 2) {
                 bottomSheetFullControllerButton.icon =
                     AppCompatResources.getDrawable(
                         wrappedContext ?: context,
@@ -1649,7 +1651,7 @@ class FullBottomSheet
                     AppCompatResources.getDrawable(context, R.drawable.bg_pause_anim)
                 bottomSheetFullControllerButton.icon.startAnimation()
                 bottomSheetFullControllerButton.background.startAnimation()
-                bottomSheetFullControllerButton.setTag(R.id.play_next, 2)
+                currentFullPlayTag = 2
                 currentCoverImage?.stopRotation()
             }
             if (!isUserTracking) {
