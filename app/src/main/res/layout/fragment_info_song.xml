@@ -53,35 +53,7 @@
             android:layout_height="match_parent"
             android:orientation="vertical">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="24dp"
-                android:fontFamily="sans-serif"
-                android:text="@string/album_cover"
-                android:textColor="?colorPrimary"
-                android:textSize="17sp"
-                app:textFontWeight="500" />
 
-            <ImageView
-                android:id="@+id/album_cover"
-                android:layout_width="184dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="16dp"
-                android:adjustViewBounds="true"
-                android:importantForAccessibility="no"
-                android:scaleType="centerCrop"
-                app:srcCompat="@drawable/ic_default_cover" />
-
-            <com.google.android.material.divider.MaterialDivider
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="24dp"
-                android:layout_marginTop="24dp"
-                android:layout_marginEnd="24dp"
-                android:layout_marginBottom="24dp" />
 
             <LinearLayout
                 android:layout_width="match_parent"

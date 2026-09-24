@@ -71,7 +71,6 @@ class DetailDialogFragment : BottomSheetDialogFragment() {
             return null
         }
         val mediaMetadata = mediaItem.mediaMetadata
-        val albumCoverImageView = rootView.findViewById<ImageView>(R.id.album_cover)
         val titleTextView = rootView.findViewById<TextView>(R.id.title)
         val artistTextView = rootView.findViewById<TextView>(R.id.artist)
         val albumArtistTextView = rootView.findViewById<TextView>(R.id.album_artist)
@@ -85,19 +84,6 @@ class DetailDialogFragment : BottomSheetDialogFragment() {
         val mimeTypeTextView = rootView.findViewById<TextView>(R.id.mime)
         val pathTextView = rootView.findViewById<TextView>(R.id.path)
         val bitRateTextView = rootView.findViewById<TextView>(R.id.bit_rate)
-        val artworkUri = mediaMetadata.artworkUri
-        if (artworkUri != null) {
-            val errorDrawable = AppCompatResources.getDrawable(requireContext(), R.drawable.ic_default_cover)
-            albumCoverImageView.load(artworkUri) {
-                placeholderScaleToFit(R.drawable.ic_default_cover)
-                crossfade(true)
-                if (errorDrawable != null) error(errorDrawable)
-            }
-        } else {
-            albumCoverImageView.setImageDrawable(
-                AppCompatResources.getDrawable(requireContext(), R.drawable.ic_default_cover)
-            )
-        }
         titleTextView.text = mediaMetadata.title
         artistTextView.text = mediaMetadata.artist
         albumTextView.text = mediaMetadata.albumTitle
