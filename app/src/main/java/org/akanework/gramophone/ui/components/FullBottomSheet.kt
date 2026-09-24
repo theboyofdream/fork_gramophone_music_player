@@ -296,10 +296,10 @@ class FullBottomSheet
         rv?.setPadding(sidePadding, 0, sidePadding, 0)
 
         coverViewPager.setPageTransformer { page, position ->
-            val scale = 0.85f + (1f - abs(position).coerceAtMost(1f)) * 0.15f
+            val scale = 0.92f + (1f - abs(position).coerceAtMost(1f)) * 0.08f
             page.scaleX = scale
             page.scaleY = scale
-            page.alpha = 0.5f + (1f - abs(position).coerceAtMost(1f)) * 0.5f
+            page.alpha = 0.7f + (1f - abs(position).coerceAtMost(1f)) * 0.3f
         }
 
         coverAdapter = CoverPagerAdapter(activity) { item ->
