@@ -80,8 +80,41 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
             }
         }
         holder.sortButton.visibility =
-            if (adapter.sortType.value != Sorter.Type.None || adapter.canChangeLayout) View.VISIBLE else View.GONE
+            if (adapter.sortType.value != Sorter.Type.None) View.VISIBLE else View.GONE
+        holder.displayLayoutButton.visibility =
+            if (adapter.canChangeLayout) View.VISIBLE else View.GONE
         updateSortButtons(holder)
+
+        holder.displayLayoutButton.setOnClickListener { view ->
+            val popupMenu = PopupMenu(context, view)
+            popupMenu.inflate(R.menu.layout_menu)
+            val layoutMap = mapOf(
+                Pair(R.id.list, BaseAdapter.LayoutType.LIST),
+                Pair(R.id.compact_list, BaseAdapter.LayoutType.COMPACT_LIST),
+                Pair(R.id.grid, BaseAdapter.LayoutType.GRID),
+                Pair(R.id.compact_grid, BaseAdapter.LayoutType.COMPACT_GRID)
+            )
+            layoutMap.entries.find { it.value == adapter.layoutType }?.let {
+                popupMenu.menu.findItem(it.key)?.isChecked = true
+            }
+            popupMenu.setOnMenuItemClickListener { menuItem ->
+                if (menuItem.itemId in layoutMap.keys) {
+                    adapter.layoutType = layoutMap[menuItem.itemId]!!
+                    menuItem.isChecked = true
+                    allowDiskAccessInStrictMode {
+                        prefs.edit {
+                            putString(
+                                "L" + getAdapterType(adapter).toString(),
+                                layoutMap[menuItem.itemId].toString()
+                            )
+                        }
+                    }
+                    true
+                } else false
+            }
+            popupMenu.show()
+        }
+
         holder.sortButton.setOnClickListener { view ->
             val popupMenu = PopupMenu(context, view)
             popupMenu.inflate(R.menu.sort_menu)
@@ -101,42 +134,13 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 Pair(R.id.file_path, Sorter.Type.ByFilePathAscending),
                 Pair(R.id.duration, Sorter.Type.ByDurationDescending)
             )
-            val sortTypeToMenuId = buildMap {
-                buttonMap.forEach { (menuId, sortType) ->
-                    put(sortType, menuId)
-                    Sorter.Type.inverse(sortType)?.let { put(it, menuId) }
-                }
-            }
-            val layoutMap = mapOf(
-                Pair(R.id.list, BaseAdapter.LayoutType.LIST),
-                Pair(R.id.compact_list, BaseAdapter.LayoutType.COMPACT_LIST),
-                Pair(R.id.grid, BaseAdapter.LayoutType.GRID),
-                Pair(R.id.compact_grid, BaseAdapter.LayoutType.COMPACT_GRID)
-            )
             buttonMap.forEach {
                 popupMenu.menu.findItem(it.key).isVisible = adapter.sortTypes.contains(it.value)
             }
-            layoutMap.forEach {
-                popupMenu.menu.findItem(it.key).isVisible = adapter.canChangeLayout
-            }
-            popupMenu.menu.findItem(R.id.display).isVisible = adapter.canChangeLayout
             val currentSort = adapter.sortType.value
             val activeEntry = buttonMap.entries.find { it.value == currentSort || Sorter.Type.inverse(it.value) == currentSort }
             if (activeEntry != null) {
                 popupMenu.menu.findItem(activeEntry.key).isChecked = true
-            }
-
-            if (adapter.canChangeLayout) {
-                when (adapter.layoutType) {
-                    in layoutMap.values -> {
-                        popupMenu.menu.findItem(
-                            layoutMap.entries
-                                .first { it.value == adapter.layoutType }.key
-                        ).isChecked = true
-                    }
-
-                    else -> throw IllegalStateException("Invalid layoutType ${adapter.layoutType?.name}")
-                }
             }
 
             val reverseItem = popupMenu.menu.findItem(R.id.reverse_order)
@@ -168,22 +172,6 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                                 }
                             }
                             updateSortButtons(holder)
-                        }
-                        true
-                    }
-
-                    in layoutMap.keys -> {
-                        if (!menuItem.isChecked) {
-                            adapter.layoutType = layoutMap[menuItem.itemId]!!
-                            menuItem.isChecked = true
-                            allowDiskAccessInStrictMode {
-                                prefs.edit {
-                                    putString(
-                                        "L" + getAdapterType(adapter).toString(),
-                                        layoutMap[menuItem.itemId].toString()
-                                    )
-                                }
-                            }
                         }
                         true
                     }
@@ -434,6 +422,7 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
         view: View,
     ) : RecyclerView.ViewHolder(view) {
         val sortButton: MaterialButton = view.findViewById(R.id.sort)
+        val displayLayoutButton: MaterialButton = view.findViewById(R.id.display_layout)
         val sortOrderButton: MaterialButton = view.findViewById(R.id.sort_order)
         val filterButton: MaterialButton = view.findViewById(R.id.filter)
         val filterBadge: View = view.findViewById(R.id.filter_badge)

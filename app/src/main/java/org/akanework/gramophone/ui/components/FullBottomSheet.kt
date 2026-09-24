@@ -37,6 +37,7 @@ import android.view.AbsSavedState
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -87,6 +88,9 @@ import androidx.media3.session.MediaBrowser
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import androidx.preference.PreferenceManager
+import androidx.recyclerview.widget.RecyclerView
+import androidx.viewpager2.widget.ViewPager2
+import org.akanework.gramophone.logic.dpToPx
 import coil3.asDrawable
 import coil3.dispose
 import coil3.imageLoader
@@ -254,7 +258,8 @@ class FullBottomSheet
                 }
             }
         }
-    private val bottomSheetFullCover: TransformableImageView
+    private val coverViewPager: ViewPager2
+    private val coverAdapter: CoverPagerAdapter
     private val bottomSheetFullTitle: TextView
     private val bottomSheetFullSubtitle: TextView
     private val bottomSheetFullControllerButton: MaterialButton
@@ -273,45 +278,53 @@ class FullBottomSheet
     val bottomSheetLyricButton: MaterialButton
     private val bottomSheetFullSeekBar: SeekBar
     private val bottomSheetFullSlider: Slider
-    private val bottomSheetFullCoverFrame: MaterialCardView
     val bottomSheetFullLyricView: LyricsView by lazy { (parent as ViewGroup).findViewById(R.id.lyric_frame)!! }
     private val progressDrawable: SquigglyProgress
     private var pqs: PlaylistQueueSheet? = null
 
-    private val prevCoverView: ImageView by lazy {
-        ImageView(context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setImageResource(R.drawable.ic_default_cover)
-        }
-    }
-
-    private val nextCoverView: ImageView by lazy {
-        ImageView(context).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setImageResource(R.drawable.ic_default_cover)
-        }
-    }
-
     init {
         inflate(context, R.layout.full_player, this)
-        bottomSheetFullCoverFrame = findViewById(R.id.album_cover_frame)
-        bottomSheetFullCover = findViewById(R.id.full_sheet_cover)
-        bottomSheetFullCoverFrame.addView(prevCoverView, 0)
-        bottomSheetFullCoverFrame.addView(nextCoverView, 0)
-        bottomSheetFullCoverFrame.clipChildren = true
-        bottomSheetFullCoverFrame.clipToPadding = true
+        coverViewPager = findViewById(R.id.cover_view_pager)
+        coverViewPager.offscreenPageLimit = 2
+        coverViewPager.clipToPadding = false
+        coverViewPager.clipChildren = false
 
-        bottomSheetFullCoverFrame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            resetCarouselPositions()
+        val rv = coverViewPager.getChildAt(0) as? RecyclerView
+        rv?.clipToPadding = false
+        rv?.clipChildren = false
+        val sidePadding = 48.dpToPx(context)
+        rv?.setPadding(sidePadding, 0, sidePadding, 0)
+
+        coverViewPager.setPageTransformer { page, position ->
+            val scale = 0.85f + (1f - abs(position).coerceAtMost(1f)) * 0.15f
+            page.scaleX = scale
+            page.scaleY = scale
+            page.alpha = 0.5f + (1f - abs(position).coerceAtMost(1f)) * 0.5f
         }
+
+        coverAdapter = CoverPagerAdapter(activity) { item ->
+            activity.startFragment(DetailDialogFragment()) {
+                putString("Id", item.mediaId)
+            }
+        }
+        coverViewPager.adapter = coverAdapter
+
+        var isUserSwiping = false
+        coverViewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+            override fun onPageScrollStateChanged(state: Int) {
+                if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
+                    isUserSwiping = true
+                } else if (state == ViewPager2.SCROLL_STATE_IDLE && isUserSwiping) {
+                    isUserSwiping = false
+                    val targetPos = coverViewPager.currentItem
+                    val player = instance
+                    if (player != null && targetPos != player.currentMediaItemIndex && targetPos in 0 until player.mediaItemCount) {
+                        player.seekToDefaultPosition(targetPos)
+                    }
+                }
+            }
+        })
+
         bottomSheetFullTitle = findViewById(R.id.full_song_name)
         bottomSheetFullSubtitle = findViewById(R.id.full_song_artist)
         bottomSheetFullPreviousButton = findViewById(R.id.sheet_previous_song)
@@ -386,92 +399,7 @@ class FullBottomSheet
             it.animate = false
         }
 
-        var coverStartX = 0f
-        var coverStartY = 0f
-        var isCoverDragging = false
-        var velocityTracker: VelocityTracker? = null
-        val swipeThreshold = 100f
 
-        @SuppressLint("ClickableViewAccessibility")
-        bottomSheetFullCoverFrame.setOnTouchListener { _, event ->
-            if (velocityTracker == null) {
-                velocityTracker = VelocityTracker.obtain()
-            }
-            velocityTracker?.addMovement(event)
-
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    coverStartX = event.rawX
-                    coverStartY = event.rawY
-                    isCoverDragging = false
-                    true
-                }
-
-                MotionEvent.ACTION_MOVE -> {
-                    val deltaX = event.rawX - coverStartX
-                    val deltaY = event.rawY - coverStartY
-                    if (!isCoverDragging && abs(deltaX) > 20f && abs(deltaX) > abs(deltaY)) {
-                        isCoverDragging = true
-                        bottomSheetFullCoverFrame.parent?.requestDisallowInterceptTouchEvent(true)
-                    }
-                    if (isCoverDragging) {
-                        val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
-                        prevCoverView.translationX = -width + deltaX
-                        bottomSheetFullCover.translationX = deltaX
-                        nextCoverView.translationX = width + deltaX
-                    }
-                    true
-                }
-
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    velocityTracker?.computeCurrentVelocity(1000)
-                    val velocityX = velocityTracker?.xVelocity ?: 0f
-                    val deltaX = event.rawX - coverStartX
-                    val deltaY = event.rawY - coverStartY
-                    val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
-
-                    if (isCoverDragging) {
-                        val isSwipeLeft = (deltaX < -swipeThreshold || velocityX < -700f) && nextCoverView.visibility == VISIBLE
-                        val isSwipeRight = (deltaX > swipeThreshold || velocityX > 700f) && prevCoverView.visibility == VISIBLE
-
-                        if (isSwipeLeft) {
-                            prevCoverView.animate().translationX(-2f * width).setDuration(180).start()
-                            bottomSheetFullCover.animate().translationX(-width).setDuration(180).start()
-                            nextCoverView.animate().translationX(0f).setDuration(180).withEndAction {
-                                ViewCompat.performHapticFeedback(bottomSheetFullCoverFrame, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                                instance?.seekToNext()
-                                resetCarouselPositions()
-                            }.start()
-                        } else if (isSwipeRight) {
-                            prevCoverView.animate().translationX(0f).setDuration(180).withEndAction {
-                                ViewCompat.performHapticFeedback(bottomSheetFullCoverFrame, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-                                instance?.seekToPrevious()
-                                resetCarouselPositions()
-                            }.start()
-                            bottomSheetFullCover.animate().translationX(width).setDuration(180).start()
-                            nextCoverView.animate().translationX(2f * width).setDuration(180).start()
-                        } else {
-                            prevCoverView.animate().translationX(-width).setDuration(180).start()
-                            bottomSheetFullCover.animate().translationX(0f).setDuration(180).start()
-                            nextCoverView.animate().translationX(width).setDuration(180).start()
-                        }
-                    } else if (abs(deltaX) < 15f && abs(deltaY) < 15f && event.actionMasked == MotionEvent.ACTION_UP) {
-                        resetCarouselPositions()
-                        activity.startFragment(DetailDialogFragment()) {
-                            putString("Id", instance?.currentMediaItem?.mediaId)
-                        }
-                    } else {
-                        resetCarouselPositions()
-                    }
-                    velocityTracker?.recycle()
-                    velocityTracker = null
-                    isCoverDragging = false
-                    true
-                }
-
-                else -> false
-            }
-        }
 
         bottomSheetFullTitle.setOnClickListener {
             minimize?.invoke()
@@ -817,14 +745,8 @@ class FullBottomSheet
                 bottomSheetFullTitle.typeface = TypefaceCompat.create(context, null, 400, false)
             }
         }
-        if (key == null || key == "album_round_corner") {
-            bottomSheetFullCoverFrame.radius = prefs.getIntStrict(
-                "album_round_corner",
-                context.resources.getInteger(R.integer.round_corner_radius)
-            ).dpToPx(context).toFloat()
-        }
         if (key == null || key == "cookie_cover") {
-            bottomSheetFullCover.setClip(prefs.getBooleanStrict("cookie_cover", false))
+            coverAdapter.setCookieCover(prefs.getBooleanStrict("cookie_cover", false))
         }
     }
 
@@ -1536,66 +1458,21 @@ class FullBottomSheet
         waiter.await()
     }
 
-    private fun resetCarouselPositions() {
-        val width = bottomSheetFullCoverFrame.width.toFloat().coerceAtLeast(1f)
-        prevCoverView.translationX = -width
-        bottomSheetFullCover.translationX = 0f
-        nextCoverView.translationX = width
-
-        prevCoverView.alpha = 1f
-        bottomSheetFullCover.alpha = 1f
-        nextCoverView.alpha = 1f
-    }
-
-    private fun updateCarouselCovers(currentMediaItem: MediaItem?) {
-        val player = instance ?: return
-        val count = player.mediaItemCount
-        if (count == 0) return
-
-        val currentIdx = player.currentMediaItemIndex
-        val prevIdx = if (currentIdx > 0) currentIdx - 1 else if (player.repeatMode == Player.REPEAT_MODE_ALL) count - 1 else -1
-        val nextIdx = if (currentIdx < count - 1) currentIdx + 1 else if (player.repeatMode == Player.REPEAT_MODE_ALL) 0 else -1
-
-        val prevItem = if (prevIdx in 0 until count) player.getMediaItemAt(prevIdx) else null
-        val nextItem = if (nextIdx in 0 until count) player.getMediaItemAt(nextIdx) else null
-
-        bottomSheetFullCover.dispose()
-        bottomSheetFullCover.loadNoPlaceholder(currentMediaItem?.mediaMetadata?.artworkUri) {
-            scale(Scale.FILL)
-            error(R.drawable.ic_default_cover)
-        }
-
-        if (prevItem != null) {
-            prevCoverView.visibility = VISIBLE
-            prevCoverView.dispose()
-            prevCoverView.loadNoPlaceholder(prevItem.mediaMetadata.artworkUri) {
-                scale(Scale.FILL)
-                error(R.drawable.ic_default_cover)
-            }
-        } else {
-            prevCoverView.visibility = GONE
-        }
-
-        if (nextItem != null) {
-            nextCoverView.visibility = VISIBLE
-            nextCoverView.dispose()
-            nextCoverView.loadNoPlaceholder(nextItem.mediaMetadata.artworkUri) {
-                scale(Scale.FILL)
-                error(R.drawable.ic_default_cover)
-            }
-        } else {
-            nextCoverView.visibility = GONE
-        }
-    }
-
     @SuppressLint("NotifyDataSetChanged")
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int
     ) {
-        if (instance?.mediaItemCount != 0) {
-            updateCarouselCovers(mediaItem)
-            resetCarouselPositions()
+        val player = instance
+        if (player != null && player.mediaItemCount > 0) {
+            val count = player.mediaItemCount
+            val list = (0 until count).map { player.getMediaItemAt(it) }
+            coverAdapter.setItems(list)
+
+            val currentIdx = player.currentMediaItemIndex
+            if (coverViewPager.currentItem != currentIdx) {
+                coverViewPager.setCurrentItem(currentIdx, true)
+            }
             if (DynamicColors.isDynamicColorAvailable() &&
                 prefs.getBooleanStrict("content_based_color", true)
             ) {
@@ -1610,10 +1487,6 @@ class FullBottomSheet
                 skipAnimation = firstTime
             )
             updateDuration()
-        } else {
-            bottomSheetFullCover.dispose()
-            prevCoverView.dispose()
-            nextCoverView.dispose()
         }
     }
 
@@ -1716,7 +1589,7 @@ class FullBottomSheet
                 runnableRunning = true
                 handler.postDelayed(positionRunnable, SLIDER_UPDATE_INTERVAL)
             }
-            bottomSheetFullCover.startRotation()
+            currentCoverImage?.startRotation()
         } else if (playbackState != Player.STATE_BUFFERING) {
             if (bottomSheetFullControllerButton.getTag(R.id.play_next) as Int? != 2) {
                 bottomSheetFullControllerButton.icon =
@@ -1729,13 +1602,20 @@ class FullBottomSheet
                 bottomSheetFullControllerButton.icon.startAnimation()
                 bottomSheetFullControllerButton.background.startAnimation()
                 bottomSheetFullControllerButton.setTag(R.id.play_next, 2)
-                bottomSheetFullCover.stopRotation()
+                currentCoverImage?.stopRotation()
             }
             if (!isUserTracking) {
                 progressDrawable.animate = false
             }
         }
     }
+
+    private val currentCoverImage: TransformableImageView?
+        get() {
+            val rv = coverViewPager.getChildAt(0) as? RecyclerView ?: return null
+            val vh = rv.findViewHolderForAdapterPosition(coverViewPager.currentItem) as? CoverPagerAdapter.CoverViewHolder
+            return vh?.coverImage
+        }
 
     // https://developer.android.com/media/implement/surfaces/pause-and-resume-media-playback-with-spacebar
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
@@ -1782,4 +1662,53 @@ class FullBottomSheet
         var lastDynamicColorsOptions: DynamicColorsOptions? = null
     }
 
+}
+
+class CoverPagerAdapter(
+    private val activity: MainActivity,
+    private val onCoverClick: (MediaItem) -> Unit
+) : RecyclerView.Adapter<CoverPagerAdapter.CoverViewHolder>() {
+
+    private var items: List<MediaItem> = emptyList()
+    private var cookieCover: Boolean = false
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun setItems(newItems: List<MediaItem>) {
+        if (items != newItems) {
+            items = newItems
+            notifyDataSetChanged()
+        }
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun setCookieCover(clip: Boolean) {
+        if (cookieCover != clip) {
+            cookieCover = clip
+            notifyDataSetChanged()
+        }
+    }
+
+    override fun getItemCount(): Int = items.size
+
+    class CoverViewHolder(val cardView: View) : RecyclerView.ViewHolder(cardView) {
+        val coverImage: TransformableImageView = cardView.findViewById(R.id.cover_image)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CoverViewHolder {
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_cover_card, parent, false)
+        return CoverViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: CoverViewHolder, position: Int) {
+        val mediaItem = items[position]
+        holder.coverImage.setClip(cookieCover)
+        holder.coverImage.dispose()
+        holder.coverImage.loadNoPlaceholder(mediaItem.mediaMetadata.artworkUri) {
+            scale(Scale.FILL)
+            error(R.drawable.ic_default_cover)
+        }
+        holder.cardView.setOnClickListener {
+            onCoverClick(mediaItem)
+        }
+    }
 }

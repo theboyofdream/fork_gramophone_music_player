@@ -88,35 +88,4 @@
         android:title="@string/reverse_order"
         app:showAsAction="never"
         android:orderInCategory="990" />
-
-    <item
-        android:id="@+id/display"
-        android:orderInCategory="999"
-        android:title="@string/layout">
-        <menu>
-            <group android:checkableBehavior="single">
-                <item
-                    android:id="@+id/compact_list"
-                    android:orderInCategory="0"
-                    android:title="@string/compact_list"
-                    app:showAsAction="never" />
-                <item
-                    android:id="@+id/list"
-                    android:orderInCategory="1"
-                    android:title="@string/list"
-                    app:showAsAction="never" />
-                <item
-                    android:id="@+id/compact_grid"
-                    android:orderInCategory="2"
-                    android:title="@string/compact_grid"
-                    app:showAsAction="never" />
-                <item
-                    android:id="@+id/grid"
-                    android:orderInCategory="3"
-                    android:title="@string/grid"
-                    app:showAsAction="never"
-                    tools:checked="true" />
-            </group>
-        </menu>
-    </item>
 </menu>
