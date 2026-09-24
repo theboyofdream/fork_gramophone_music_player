@@ -1752,17 +1752,13 @@ class CoverPagerAdapter(
         val mediaItem = items[position]
         holder.coverImage.setClip(cookieCover)
         holder.coverImage.dispose()
+        val defaultCover = AppCompatResources.getDrawable(activity, R.drawable.ic_default_cover)
+        holder.coverImage.setImageDrawable(defaultCover)
         val uri = mediaItem.mediaMetadata.artworkUri
         if (uri != null) {
-            val errorDrawable = AppCompatResources.getDrawable(activity, R.drawable.ic_default_cover)
             holder.coverImage.loadNoPlaceholder(uri) {
                 scale(Scale.FILL)
-                if (errorDrawable != null) error(errorDrawable)
             }
-        } else {
-            holder.coverImage.setImageDrawable(
-                AppCompatResources.getDrawable(activity, R.drawable.ic_default_cover)
-            )
         }
     }
 }

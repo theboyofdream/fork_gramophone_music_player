@@ -57,6 +57,11 @@ class PreviewBottomSheet(
     private val bottomSheetPreviewSubtitle: TextView
     private val bottomSheetPreviewControllerButton: MaterialButton
 
+    private var touchStartX = 0f
+    private var touchStartY = 0f
+    private var isHorizontalSwipe = false
+    private val swipeDetector: GestureDetector
+
     constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
             this(context, attrs, defStyleAttr, 0)
 
@@ -74,7 +79,7 @@ class PreviewBottomSheet(
             instance?.playOrPause()
         }
 
-        val swipeDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        swipeDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
             private val SWIPE_THRESHOLD = 80f
             private val SWIPE_VELOCITY_THRESHOLD = 200f
 
@@ -92,11 +97,9 @@ class PreviewBottomSheet(
                     abs(velocityX) > SWIPE_VELOCITY_THRESHOLD
                 ) {
                     if (diffX > 0) {
-                        // Swipe right -> Previous song
                         ViewCompat.performHapticFeedback(this@PreviewBottomSheet, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
                         instance?.seekToPrevious()
                     } else {
-                        // Swipe left -> Next song
                         ViewCompat.performHapticFeedback(this@PreviewBottomSheet, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
                         instance?.seekToNext()
                     }
@@ -106,10 +109,6 @@ class PreviewBottomSheet(
             }
         })
 
-        setOnTouchListener { _, event ->
-            swipeDetector.onTouchEvent(event)
-        }
-
         activity.controllerViewModel.addRecreationalPlayerListener(activity.lifecycle, this) {
             onPlaybackStateChanged(instance?.playbackState ?: Player.STATE_IDLE)
             onMediaItemTransition(
@@ -117,6 +116,51 @@ class PreviewBottomSheet(
                 Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
             )
         }
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchStartX = ev.rawX
+                touchStartY = ev.rawY
+                isHorizontalSwipe = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val deltaX = abs(ev.rawX - touchStartX)
+                val deltaY = abs(ev.rawY - touchStartY)
+                if (deltaX > 30f && deltaX > deltaY) {
+                    isHorizontalSwipe = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchStartX = event.rawX
+                touchStartY = event.rawY
+                isHorizontalSwipe = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val deltaX = abs(event.rawX - touchStartX)
+                val deltaY = abs(event.rawY - touchStartY)
+                if (!isHorizontalSwipe && deltaX > 30f && deltaX > deltaY) {
+                    isHorizontalSwipe = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
+            }
+        }
+        if (isHorizontalSwipe) {
+            return swipeDetector.onTouchEvent(event)
+        }
+        return super.onTouchEvent(event)
     }
 
     override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -144,28 +188,28 @@ class PreviewBottomSheet(
         mediaItem: MediaItem?,
         reason: @Player.MediaItemTransitionReason Int
     ) {
-        if ((instance?.mediaItemCount ?: 0) > 0) {
-            bottomSheetPreviewCover.dispose()
-            val uri = mediaItem?.mediaMetadata?.artworkUri
-            if (uri != null) {
-                val errorDrawable = AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
-                bottomSheetPreviewCover.loadNoPlaceholder(uri) {
-                    scale(Scale.FILL)
-                    if (errorDrawable != null) error(errorDrawable)
+        try {
+            if ((instance?.mediaItemCount ?: 0) > 0) {
+                bottomSheetPreviewCover.dispose()
+                val defaultCover = AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
+                bottomSheetPreviewCover.setImageDrawable(defaultCover)
+                val uri = mediaItem?.mediaMetadata?.artworkUri
+                if (uri != null) {
+                    bottomSheetPreviewCover.loadNoPlaceholder(uri) {
+                        scale(Scale.FILL)
+                    }
                 }
+                bottomSheetPreviewTitle.text = mediaItem?.mediaMetadata?.title ?: ""
+                bottomSheetPreviewSubtitle.text =
+                    mediaItem?.mediaMetadata?.artist ?: context.getString(R.string.unknown_artist)
             } else {
+                bottomSheetPreviewCover.dispose()
                 bottomSheetPreviewCover.setImageDrawable(
                     AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
                 )
             }
-            bottomSheetPreviewTitle.text = mediaItem?.mediaMetadata?.title
-            bottomSheetPreviewSubtitle.text =
-                mediaItem?.mediaMetadata?.artist ?: context.getString(R.string.unknown_artist)
-        } else {
-            bottomSheetPreviewCover.dispose()
-            bottomSheetPreviewCover.setImageDrawable(
-                AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
-            )
+        } catch (e: Exception) {
+            android.util.Log.e("PreviewBottomSheet", "Error in onMediaItemTransition", e)
         }
     }
 }

@@ -69,10 +69,15 @@ abstract class EditSongAdapter(
             item.mediaMetadata.durationMs?.convertDurationToTimeStamp(),
             item.mediaMetadata.artist ?: context.getString(R.string.unknown_artist)
         ) else item.mediaMetadata.artist ?: context.getString(R.string.unknown_artist)
-        holder.songCover.load(item.mediaMetadata.artworkUri) {
-            placeholderScaleToFit(getCoverFallback(position))
-            crossfade(true)
-            error(getCoverFallback(position))
+        val uri = item.mediaMetadata.artworkUri
+        val fallback = getCoverFallback(position)
+        if (uri != null) {
+            holder.songCover.load(uri) {
+                placeholderScaleToFit(fallback)
+                crossfade(true)
+            }
+        } else {
+            holder.songCover.setImageResource(fallback)
         }
         holder.closeButton.setOnClickListener { v ->
             ViewCompat.performHapticFeedback(v, HapticFeedbackConstantsCompat.CONTEXT_CLICK)

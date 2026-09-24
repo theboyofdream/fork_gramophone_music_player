@@ -560,10 +560,14 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
         if (!onlyDuration) {
             audioTitle.text = player.mediaMetadata.title ?: getString(R.string.unknown_title)
             artistTextView.text = player.mediaMetadata.artist ?: getString(R.string.unknown_artist)
-            albumArt.load(player.mediaMetadata.artworkData) {
-                placeholderScaleToFit(R.drawable.ic_default_cover)
-                error(R.drawable.ic_default_cover)
-                memoryCacheKey(player.mediaMetadata.artworkData.hashCode().toString())
+            val data = player.mediaMetadata.artworkData
+            if (data != null) {
+                albumArt.load(data) {
+                    placeholderScaleToFit(R.drawable.ic_default_cover)
+                    memoryCacheKey(data.hashCode().toString())
+                }
+            } else {
+                albumArt.setImageResource(R.drawable.ic_default_cover)
             }
         }
         val duration = player.contentDuration.let { if (it == C.TIME_UNSET) null else it }

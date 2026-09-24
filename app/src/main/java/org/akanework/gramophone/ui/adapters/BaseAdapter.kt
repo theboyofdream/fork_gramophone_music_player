@@ -440,10 +440,14 @@ abstract class BaseAdapter<T : Any>(
         }
         holder.title.text = titleOf(item) ?: virtualTitleOf(item)
         holder.subTitle.text = subTitleOf(item)
-        holder.songCover.load(coverOf(item)) {
-            placeholderScaleToFit(defaultCover)
-            crossfade(true)
-            error(defaultCover)
+        val cover = coverOf(item)
+        if (cover != null) {
+            holder.songCover.load(cover) {
+                placeholderScaleToFit(defaultCover)
+                crossfade(true)
+            }
+        } else {
+            holder.songCover.setImageResource(defaultCover)
         }
         holder.itemView.setOnClickListener {
             val pos = holder.bindingAdapterPosition
