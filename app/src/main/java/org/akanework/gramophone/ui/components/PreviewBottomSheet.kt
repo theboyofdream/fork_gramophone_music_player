@@ -17,8 +17,11 @@
 
 package org.akanework.gramophone.ui.components
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.util.AttributeSet
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
@@ -28,20 +31,16 @@ import androidx.core.view.ViewCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
-import coil3.asDrawable
 import coil3.dispose
-import coil3.imageLoader
-import coil3.request.Disposable
-import coil3.request.ImageRequest
-import coil3.request.allowHardware
-import coil3.request.error
 import coil3.size.Scale
 import com.google.android.material.button.MaterialButton
 import org.akanework.gramophone.R
 import org.akanework.gramophone.logic.playOrPause
 import org.akanework.gramophone.logic.startAnimation
 import org.akanework.gramophone.ui.MainActivity
+import kotlin.math.abs
 
+@SuppressLint("ClickableViewAccessibility")
 class PreviewBottomSheet(
     context: Context,
     attrs: AttributeSet?,
@@ -57,7 +56,6 @@ class PreviewBottomSheet(
     private val bottomSheetPreviewTitle: TextView
     private val bottomSheetPreviewSubtitle: TextView
     private val bottomSheetPreviewControllerButton: MaterialButton
-    private val bottomSheetPreviewNextButton: MaterialButton
 
     constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) :
             this(context, attrs, defStyleAttr, 0)
@@ -70,16 +68,46 @@ class PreviewBottomSheet(
         bottomSheetPreviewSubtitle = findViewById(R.id.preview_artist_name)
         bottomSheetPreviewCover = findViewById(R.id.preview_album_cover)
         bottomSheetPreviewControllerButton = findViewById(R.id.preview_control)
-        bottomSheetPreviewNextButton = findViewById(R.id.preview_next)
 
         bottomSheetPreviewControllerButton.setOnClickListener {
             ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
             instance?.playOrPause()
         }
 
-        bottomSheetPreviewNextButton.setOnClickListener {
-            ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-            instance?.seekToNext()
+        val swipeDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            private val SWIPE_THRESHOLD = 80f
+            private val SWIPE_VELOCITY_THRESHOLD = 200f
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                if (e1 == null) return false
+                val diffX = e2.x - e1.x
+                val diffY = e2.y - e1.y
+                if (abs(diffX) > abs(diffY) &&
+                    abs(diffX) > SWIPE_THRESHOLD &&
+                    abs(velocityX) > SWIPE_VELOCITY_THRESHOLD
+                ) {
+                    if (diffX > 0) {
+                        // Swipe right -> Previous song
+                        ViewCompat.performHapticFeedback(this@PreviewBottomSheet, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                        instance?.seekToPrevious()
+                    } else {
+                        // Swipe left -> Next song
+                        ViewCompat.performHapticFeedback(this@PreviewBottomSheet, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+                        instance?.seekToNext()
+                    }
+                    return true
+                }
+                return false
+            }
+        })
+
+        setOnTouchListener { _, event ->
+            swipeDetector.onTouchEvent(event)
         }
 
         activity.controllerViewModel.addRecreationalPlayerListener(activity.lifecycle, this) {

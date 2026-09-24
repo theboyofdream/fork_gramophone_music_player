@@ -28,6 +28,7 @@ import coil3.request.crossfade
 import coil3.request.error
 import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -44,8 +45,12 @@ import org.akanework.gramophone.logic.toLocaleString
 import org.akanework.gramophone.logic.toMediaStoreId
 import org.akanework.gramophone.logic.ui.placeholderScaleToFit
 import org.akanework.gramophone.logic.utils.CalculationUtils.convertDurationToTimeStamp
+import org.akanework.gramophone.ui.MainActivity
 
-class DetailDialogFragment : BaseFragment(false) {
+class DetailDialogFragment : BottomSheetDialogFragment() {
+
+    private val mainActivity: MainActivity
+        get() = requireActivity() as MainActivity
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -56,12 +61,12 @@ class DetailDialogFragment : BaseFragment(false) {
         rootView.findViewById<AppBarLayout>(R.id.appbarlayout).enableEdgeToEdgePaddingListener()
         rootView.findViewById<View>(R.id.scrollView).enableEdgeToEdgePaddingListener()
         rootView.findViewById<MaterialToolbar>(R.id.topAppBar).setNavigationOnClickListener {
-            requireActivity().supportFragmentManager.popBackStack()
+            dismiss()
         }
         val id = requireArguments().getString("Id")?.toMediaStoreId()
         val mediaItem = runBlocking { mainActivity.reader.idMapFlow.map { it[id] }.first() }
         if (mediaItem == null) {
-            parentFragmentManager.popBackStack()
+            dismiss()
             return null
         }
         val mediaMetadata = mediaItem.mediaMetadata

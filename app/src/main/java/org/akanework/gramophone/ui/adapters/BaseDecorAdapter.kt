@@ -41,6 +41,7 @@ import org.akanework.gramophone.logic.ui.QuickLinearSmoothScroller
 import org.akanework.gramophone.logic.utils.FilterRangeDialog
 import org.akanework.gramophone.logic.queueWithTitle
 import org.akanework.gramophone.logic.setMediaItemsWithTitle
+import org.akanework.gramophone.ui.MainActivity
 import org.akanework.gramophone.ui.fragments.AdapterFragment
 import org.akanework.gramophone.ui.getAdapterType
 
@@ -221,36 +222,45 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
         }
         holder.shuffleAll.setOnClickListener {
             ShortcutManagerCompat.reportShortcutUsed(context, "shuffle_all")
-            if (adapter is SongAdapter) {
-                val songList = adapter.getSongList()
-                val controller = adapter.getActivity().getPlayer()
-                controller?.apply {
-                    setMediaItemsWithTitle(
-                        songList,
-                        title = runBlocking { adapter.queueTitle!!.first() },
-                        shuffleEnabled = true,
-                    )
-                    if (songList.isNotEmpty()) {
-                        prepare()
-                        play()
-                    }
-                }
-            } else if (adapter is AlbumAdapter) {
-                val list = adapter.getAlbumList()
-                val controller = adapter.getActivity().getPlayer()
-                controller?.apply {
-                    list.takeIf { it.isNotEmpty() }?.also { albums ->
+            val mainActivity = (context as MainActivity)
+            val controller = mainActivity.getPlayer()
+            val isShuffled = controller?.shuffleModeEnabled == true
+            if (isShuffled) {
+                controller?.shuffleModeEnabled = false
+                holder.shuffleAll.isChecked = false
+            } else {
+                if (adapter is SongAdapter) {
+                    val songList = adapter.getSongList()
+                    controller?.apply {
                         setMediaItemsWithTitle(
-                            albums.shuffled().flatMap { it.songList },
-                            title = context.getString(R.string.shuffled,
-                                    runBlocking { adapter.queueTitle.first() }),
-                            shuffleEnabled = false,
-                            repeatMode = REPEAT_MODE_OFF,
+                            songList,
+                            title = runBlocking { adapter.queueTitle!!.first() },
+                            shuffleEnabled = true,
                         )
-                        prepare()
-                        play()
-                    } ?: setMediaItems(listOf())
+                        if (songList.isNotEmpty()) {
+                            prepare()
+                            play()
+                        }
+                    }
+                } else if (adapter is AlbumAdapter) {
+                    val list = adapter.getAlbumList()
+                    controller?.apply {
+                        list.takeIf { it.isNotEmpty() }?.also { albums ->
+                            setMediaItemsWithTitle(
+                                albums.shuffled().flatMap { it.songList },
+                                title = context.getString(R.string.shuffled,
+                                        runBlocking { adapter.queueTitle.first() }),
+                                shuffleEnabled = true,
+                                repeatMode = REPEAT_MODE_OFF,
+                            )
+                            prepare()
+                            play()
+                        } ?: setMediaItems(listOf())
+                    }
+                } else {
+                    controller?.shuffleModeEnabled = true
                 }
+                holder.shuffleAll.isChecked = true
             }
         }
         holder.jumpUp.visibility = if (jumpUpPos != null) View.VISIBLE else View.GONE
@@ -381,6 +391,7 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
         holder.filterButton.visibility = if (isFilterable) View.VISIBLE else View.GONE
         val hasFilter = isFilterable && (adapter as? BaseAdapter<*>)?.filterRange?.value != null
         holder.filterBadge.visibility = if (hasFilter) View.VISIBLE else View.GONE
+        holder.shuffleAll.isChecked = (context as? MainActivity)?.getPlayer()?.shuffleModeEnabled == true
     }
 
     override fun getItemCount(): Int = 1

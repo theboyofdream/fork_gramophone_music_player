@@ -260,6 +260,7 @@ class FullBottomSheet
         }
     private val coverViewPager: ViewPager2
     private val coverAdapter: CoverPagerAdapter
+    private val bottomSheetInfoDetailsButton: MaterialButton
     private val bottomSheetFullTitle: TextView
     private val bottomSheetFullSubtitle: TextView
     private val bottomSheetFullControllerButton: MaterialButton
@@ -295,6 +296,46 @@ class FullBottomSheet
         val sidePadding = 48.dpToPx(context)
         rv?.setPadding(sidePadding, 0, sidePadding, 0)
 
+        var touchStartX = 0f
+        var touchStartY = 0f
+        var isHorizontalDrag = false
+        var isVerticalDrag = false
+
+        @SuppressLint("ClickableViewAccessibility")
+        rv?.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchStartX = event.rawX
+                    touchStartY = event.rawY
+                    isHorizontalDrag = false
+                    isVerticalDrag = false
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val deltaX = abs(event.rawX - touchStartX)
+                    val deltaY = abs(event.rawY - touchStartY)
+
+                    if (!isHorizontalDrag && !isVerticalDrag) {
+                        if (deltaY > 15f && deltaY > deltaX) {
+                            isVerticalDrag = true
+                            v.parent?.requestDisallowInterceptTouchEvent(false)
+                        } else if (deltaX > 15f && deltaX > deltaY) {
+                            isHorizontalDrag = true
+                            v.parent?.requestDisallowInterceptTouchEvent(true)
+                        }
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    isHorizontalDrag = false
+                    isVerticalDrag = false
+                }
+            }
+            false
+        }
+
         coverViewPager.setPageTransformer { page, position ->
             val scale = 0.92f + (1f - abs(position).coerceAtMost(1f)) * 0.08f
             page.scaleX = scale
@@ -302,11 +343,7 @@ class FullBottomSheet
             page.alpha = 0.7f + (1f - abs(position).coerceAtMost(1f)) * 0.3f
         }
 
-        coverAdapter = CoverPagerAdapter(activity) { item ->
-            activity.startFragment(DetailDialogFragment()) {
-                putString("Id", item.mediaId)
-            }
-        }
+        coverAdapter = CoverPagerAdapter(activity)
         coverViewPager.adapter = coverAdapter
 
         var isUserSwiping = false
@@ -324,6 +361,17 @@ class FullBottomSheet
                 }
             }
         })
+
+        bottomSheetInfoDetailsButton = findViewById(R.id.song_info_details)
+        bottomSheetInfoDetailsButton.setOnClickListener {
+            ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
+            val id = instance?.currentMediaItem?.mediaId
+            if (id != null) {
+                DetailDialogFragment().apply {
+                    arguments = Bundle().apply { putString("Id", id) }
+                }.show(activity.supportFragmentManager, "song_details")
+            }
+        }
 
         bottomSheetFullTitle = findViewById(R.id.full_song_name)
         bottomSheetFullSubtitle = findViewById(R.id.full_song_artist)
@@ -1665,8 +1713,7 @@ class FullBottomSheet
 }
 
 class CoverPagerAdapter(
-    private val activity: MainActivity,
-    private val onCoverClick: (MediaItem) -> Unit
+    private val activity: MainActivity
 ) : RecyclerView.Adapter<CoverPagerAdapter.CoverViewHolder>() {
 
     private var items: List<MediaItem> = emptyList()
@@ -1706,9 +1753,6 @@ class CoverPagerAdapter(
         holder.coverImage.loadNoPlaceholder(mediaItem.mediaMetadata.artworkUri) {
             scale(Scale.FILL)
             error(R.drawable.ic_default_cover)
-        }
-        holder.cardView.setOnClickListener {
-            onCoverClick(mediaItem)
         }
     }
 }
