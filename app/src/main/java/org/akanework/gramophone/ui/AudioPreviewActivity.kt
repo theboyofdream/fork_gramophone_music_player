@@ -527,12 +527,14 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
         }
     }
 
+    private var currentAudioPreviewPlayTag: Int = 0
+
     private fun updatePlayPauseButton() {
         if (player.isPlaying) {
-            if (playPauseButton.getTag(R.id.play_next) as Int? != 1) {
+            if (currentAudioPreviewPlayTag != 1) {
                 playPauseButton.icon = AppCompatResources.getDrawable(this, R.drawable.play_anim)
                 playPauseButton.icon.startAnimation()
-                playPauseButton.setTag(R.id.play_next, 1)
+                currentAudioPreviewPlayTag = 1
             }
             if (!isUserTracking) {
                 progressDrawable.animate = true
@@ -542,11 +544,11 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                 runnableRunning = true
             }
         } else if (player.playbackState != Player.STATE_BUFFERING) {
-            if (playPauseButton.getTag(R.id.play_next) as Int? != 2) {
+            if (currentAudioPreviewPlayTag != 2) {
                 playPauseButton.icon =
                     AppCompatResources.getDrawable(this, R.drawable.pause_anim)
                 playPauseButton.icon.startAnimation()
-                playPauseButton.setTag(R.id.play_next, 2)
+                currentAudioPreviewPlayTag = 2
             }
             if (!isUserTracking) {
                 progressDrawable.animate = false
