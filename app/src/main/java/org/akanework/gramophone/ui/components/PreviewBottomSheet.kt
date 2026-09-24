@@ -146,16 +146,26 @@ class PreviewBottomSheet(
     ) {
         if ((instance?.mediaItemCount ?: 0) > 0) {
             bottomSheetPreviewCover.dispose()
-            bottomSheetPreviewCover.loadNoPlaceholder(mediaItem?.mediaMetadata?.artworkUri) {
-                // do not react to onStart() which sets placeholder
-                scale(Scale.FILL)
-                error(R.drawable.ic_default_cover)
+            val uri = mediaItem?.mediaMetadata?.artworkUri
+            if (uri != null) {
+                val errorDrawable = AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
+                bottomSheetPreviewCover.loadNoPlaceholder(uri) {
+                    scale(Scale.FILL)
+                    if (errorDrawable != null) error(errorDrawable)
+                }
+            } else {
+                bottomSheetPreviewCover.setImageDrawable(
+                    AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
+                )
             }
             bottomSheetPreviewTitle.text = mediaItem?.mediaMetadata?.title
             bottomSheetPreviewSubtitle.text =
                 mediaItem?.mediaMetadata?.artist ?: context.getString(R.string.unknown_artist)
         } else {
             bottomSheetPreviewCover.dispose()
+            bottomSheetPreviewCover.setImageDrawable(
+                AppCompatResources.getDrawable(context, R.drawable.ic_default_cover)
+            )
         }
     }
 }

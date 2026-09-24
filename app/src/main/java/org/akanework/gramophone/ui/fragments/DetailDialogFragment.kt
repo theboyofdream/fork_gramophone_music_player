@@ -23,6 +23,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.appcompat.content.res.AppCompatResources
 import coil3.load
 import coil3.request.crossfade
 import coil3.request.error
@@ -84,10 +85,18 @@ class DetailDialogFragment : BottomSheetDialogFragment() {
         val mimeTypeTextView = rootView.findViewById<TextView>(R.id.mime)
         val pathTextView = rootView.findViewById<TextView>(R.id.path)
         val bitRateTextView = rootView.findViewById<TextView>(R.id.bit_rate)
-        albumCoverImageView.load(mediaMetadata.artworkUri) {
-            placeholderScaleToFit(R.drawable.ic_default_cover)
-            crossfade(true)
-            error(R.drawable.ic_default_cover)
+        val artworkUri = mediaMetadata.artworkUri
+        if (artworkUri != null) {
+            val errorDrawable = AppCompatResources.getDrawable(requireContext(), R.drawable.ic_default_cover)
+            albumCoverImageView.load(artworkUri) {
+                placeholderScaleToFit(R.drawable.ic_default_cover)
+                crossfade(true)
+                if (errorDrawable != null) error(errorDrawable)
+            }
+        } else {
+            albumCoverImageView.setImageDrawable(
+                AppCompatResources.getDrawable(requireContext(), R.drawable.ic_default_cover)
+            )
         }
         titleTextView.text = mediaMetadata.title
         artistTextView.text = mediaMetadata.artist
