@@ -401,8 +401,18 @@ class PlayerBottomSheet private constructor(
         }
     }
 
+    private var isExpandedBeforePause: Boolean = false
+
+    override fun onStart(owner: LifecycleOwner) {
+        super.onStart(owner)
+        if (isExpandedBeforePause && (instance?.mediaItemCount ?: 0) > 0) {
+            standardBottomSheetBehavior?.state = BottomSheetBehavior.STATE_EXPANDED
+        }
+    }
+
     override fun onStop(owner: LifecycleOwner) {
         super.onStop(owner)
+        isExpandedBeforePause = visibleAndExpanded
         fullPlayer.onStop()
     }
 }

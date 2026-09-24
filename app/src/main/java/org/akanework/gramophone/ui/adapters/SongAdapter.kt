@@ -47,6 +47,7 @@ import org.akanework.gramophone.logic.setMediaItemsSeamlessly
 import org.akanework.gramophone.logic.ui.MyRecyclerView
 import org.akanework.gramophone.ui.MediaControllerViewModel
 import org.akanework.gramophone.ui.SongPickerActivity
+import org.akanework.gramophone.ui.components.DetailBottomSheetDialog
 import org.akanework.gramophone.ui.components.NowPlayingDrawable
 import org.akanework.gramophone.ui.fragments.ArtistSubFragment
 import org.akanework.gramophone.ui.fragments.DetailDialogFragment
@@ -439,9 +440,7 @@ class SongAdapter(
                 }
 
                 R.id.details -> {
-                    mainActivity.startFragment(DetailDialogFragment()) {
-                        putString("Id", item.mediaId)
-                    }
+                    DetailBottomSheetDialog(mainActivity, item).show()
                     true
                 }
 

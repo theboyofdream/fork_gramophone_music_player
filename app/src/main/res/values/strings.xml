@@ -315,6 +315,7 @@
     <string name="grant_audio"><![CDATA[Please grant \"Music and audio\" permission]]></string>
     <!-- When app crashes, this is shown as toast to notify user that crash logs are copied -->
     <string name="crash_clipboard">Copied crash log to clipboard</string>
+    <string name="copied_to_clipboard">Copied to clipboard: %1$s</string>
     <string name="crash_thread" translatable="false">Thread</string>
     <!-- Settings toggle in lyrics UI to remove spaces at start and end of text. Title -->
     <string name="settings_trim_lyrics">Remove spaces around lyrics</string>

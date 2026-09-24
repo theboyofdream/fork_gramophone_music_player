@@ -365,11 +365,9 @@ class FullBottomSheet
         bottomSheetInfoDetailsButton = findViewById(R.id.song_info_details)
         bottomSheetInfoDetailsButton.setOnClickListener {
             ViewCompat.performHapticFeedback(it, HapticFeedbackConstantsCompat.CONTEXT_CLICK)
-            val id = instance?.currentMediaItem?.mediaId
-            if (id != null) {
-                DetailDialogFragment().apply {
-                    arguments = Bundle().apply { putString("Id", id) }
-                }.show(activity.supportFragmentManager, "song_details")
+            val item = instance?.currentMediaItem
+            if (item != null) {
+                DetailBottomSheetDialog(activity, item).show()
             }
         }
 
@@ -1375,7 +1373,9 @@ class FullBottomSheet
             loopTransition.apply {
                 addUpdateListener { animation ->
                     val progressColor = animation.animatedValue as Int
-                    bottomSheetLoopButton.iconTint = ColorStateList.valueOf(progressColor)
+                    val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+                    val colors = intArrayOf(progressColor, androidx.core.graphics.ColorUtils.setAlphaComponent(progressColor, 90))
+                    bottomSheetLoopButton.iconTint = ColorStateList(states, colors)
                 }
                 duration = BACKGROUND_COLOR_TRANSITION_SEC
             }
@@ -1383,7 +1383,9 @@ class FullBottomSheet
             shuffleTransition.apply {
                 addUpdateListener { animation ->
                     val progressColor = animation.animatedValue as Int
-                    bottomSheetShuffleButton.iconTint = ColorStateList.valueOf(progressColor)
+                    val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+                    val colors = intArrayOf(progressColor, androidx.core.graphics.ColorUtils.setAlphaComponent(progressColor, 90))
+                    bottomSheetShuffleButton.iconTint = ColorStateList(states, colors)
                 }
                 duration = BACKGROUND_COLOR_TRANSITION_SEC
             }
