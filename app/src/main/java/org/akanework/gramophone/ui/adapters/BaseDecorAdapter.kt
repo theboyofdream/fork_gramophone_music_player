@@ -135,32 +135,19 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                 Pair(R.id.duration, Sorter.Type.ByDurationDescending)
             )
             buttonMap.forEach {
-                popupMenu.menu.findItem(it.key).isVisible = adapter.sortTypes.contains(it.value)
+                popupMenu.menu.findItem(it.key)?.isVisible = adapter.sortTypes.contains(it.value)
             }
             val currentSort = adapter.sortType.value
             val activeEntry = buttonMap.entries.find { it.value == currentSort || Sorter.Type.inverse(it.value) == currentSort }
             if (activeEntry != null) {
-                popupMenu.menu.findItem(activeEntry.key).isChecked = true
-            }
-
-            val reverseItem = popupMenu.menu.findItem(R.id.reverse_order)
-            val inverse = Sorter.Type.inverse(adapter.sortType.value)
-            if (inverse == null) {
-                reverseItem.isVisible = false
-            } else {
-                reverseItem.isChecked = activeEntry != null && currentSort != activeEntry.value && currentSort != Sorter.Type.None
+                popupMenu.menu.findItem(activeEntry.key)?.isChecked = true
             }
 
             popupMenu.setOnMenuItemClickListener { menuItem ->
                 when (menuItem.itemId) {
                     in buttonMap.keys -> {
                         if (!menuItem.isChecked) {
-                            val baseType = buttonMap[menuItem.itemId]!!
-                            val reverse = prefs.getBoolean("S" + getAdapterType(adapter) +
-                                    "_reverse_" + baseType, false)
-                            val targetType = if (!reverse) baseType else
-                                Sorter.Type.inverse(baseType) ?: baseType
-                            reverseItem.isChecked = reverse
+                            val targetType = buttonMap[menuItem.itemId]!!
                             adapter.sort(targetType)
                             menuItem.isChecked = true
                             allowDiskAccessInStrictMode {
@@ -172,25 +159,6 @@ open class BaseDecorAdapter<T : AdapterFragment.BaseInterface<*>>(
                                 }
                             }
                             updateSortButtons(holder)
-                        }
-                        true
-                    }
-
-                    R.id.reverse_order -> {
-                        menuItem.isChecked = !menuItem.isChecked
-                        val activeId = buttonMap.entries.first {
-                            it.value == adapter.sortType.value || Sorter.Type.inverse(it.value) == adapter.sortType.value 
-                        }.key
-                        val baseType = buttonMap[activeId]!!
-                        val targetType = if (menuItem.isChecked) Sorter.Type.inverse(baseType) ?: baseType else baseType
-                        adapter.sort(targetType)
-                        prefs.edit {
-                            putBoolean("S" + getAdapterType(adapter) + "_reverse_" + baseType,
-                                menuItem.isChecked)
-                            putString(
-                                "S" + getAdapterType(adapter).toString(),
-                                targetType.toString()
-                            )
                         }
                         true
                     }

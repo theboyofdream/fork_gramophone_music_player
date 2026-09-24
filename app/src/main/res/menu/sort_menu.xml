@@ -82,10 +82,4 @@
             android:title="@string/sort_by_duration"
             app:showAsAction="never" />
     </group>
-    <item
-        android:id="@+id/reverse_order"
-        android:checkable="true"
-        android:title="@string/reverse_order"
-        app:showAsAction="never"
-        android:orderInCategory="990" />
 </menu>
