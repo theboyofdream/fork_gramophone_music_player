@@ -115,8 +115,6 @@ class PlayerBottomSheet private constructor(
         previewPlayer = findViewById(R.id.preview_player)!!
         fullPlayer = findViewById(R.id.full_player)!!
 
-        setOnClickListener { open() }
-
         activity.controllerViewModel.addRecreationalPlayerListener(activity.lifecycle, this) {
             onMediaItemTransition(
                 instance?.currentMediaItem,

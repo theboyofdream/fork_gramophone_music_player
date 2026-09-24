@@ -130,6 +130,6 @@ class DetailBottomSheetDialog(
         val clipboard = ContextCompat.getSystemService(context, ClipboardManager::class.java)
         val clip = ClipData.newPlainText("Detail", text)
         clipboard?.setPrimaryClip(clip)
-        Toast.makeText(context, context.getString(R.string.copied_to_clipboard, text), Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.copied_to_clipboard), Toast.LENGTH_SHORT).show()
     }
 }

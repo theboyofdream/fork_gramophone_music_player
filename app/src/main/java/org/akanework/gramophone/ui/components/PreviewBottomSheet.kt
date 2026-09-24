@@ -128,7 +128,7 @@ class PreviewBottomSheet(
             MotionEvent.ACTION_MOVE -> {
                 val deltaX = abs(ev.rawX - touchStartX)
                 val deltaY = abs(ev.rawY - touchStartY)
-                if (deltaX > 30f && deltaX > deltaY) {
+                if (deltaX > 25f && deltaX > deltaY) {
                     isHorizontalSwipe = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                     return true
@@ -144,21 +144,37 @@ class PreviewBottomSheet(
                 touchStartX = event.rawX
                 touchStartY = event.rawY
                 isHorizontalSwipe = false
+                swipeDetector.onTouchEvent(event)
+                return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val deltaX = abs(event.rawX - touchStartX)
                 val deltaY = abs(event.rawY - touchStartY)
-                if (!isHorizontalSwipe && deltaX > 30f && deltaX > deltaY) {
+                if (!isHorizontalSwipe && deltaX > 25f && deltaX > deltaY) {
                     isHorizontalSwipe = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                 }
+                if (isHorizontalSwipe) {
+                    swipeDetector.onTouchEvent(event)
+                    return true
+                }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                parent?.requestDisallowInterceptTouchEvent(false)
+            MotionEvent.ACTION_UP -> {
+                val deltaX = abs(event.rawX - touchStartX)
+                val deltaY = abs(event.rawY - touchStartY)
+                if (isHorizontalSwipe) {
+                    swipeDetector.onTouchEvent(event)
+                    isHorizontalSwipe = false
+                    return true
+                }
+                if (deltaX < 15f && deltaY < 15f) {
+                    activity.playerBottomSheet.open()
+                    return true
+                }
             }
-        }
-        if (isHorizontalSwipe) {
-            return swipeDetector.onTouchEvent(event)
+            MotionEvent.ACTION_CANCEL -> {
+                isHorizontalSwipe = false
+            }
         }
         return super.onTouchEvent(event)
     }
