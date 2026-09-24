@@ -32,21 +32,30 @@ A sane music player built with media3 and the Material Design library that is fo
 - Support for system/third-party Equalizer apps
 
 ## Fork Extras
-> Changes by [@theboyofdream](https://github.com/theboyofdream) on top of upstream Gramophone.
+> Changes by [@theboyofdream](https://github.com/theboyofdream/fork_gramophone_music_player) on top of upstream Gramophone.
 
-- Enhanced sorting
-  - Sort by file size and duration
-  - ASC/DESC sort order toggle
-  - Persistent sort preferences
-- Advanced filtering
-  - Filter songs by file size and duration using range sliders
-  - Filter badge indicator when filters are active
+- **Multi-Select Contextual Actions**
+  - Multi-song selection via long-press in song lists
+  - Contextual action bar overlay (`windowActionModeOverlay`) with zero layout shift
+  - Batch operations: Add to playlist, Remove from playlist, Add to queue, Play next, Select all, and Delete
+- **Interactive Album Cover Carousel**
+  - ViewPager2-based peeking album cover carousel with subtle 0.92x adjacent scaling
+  - Tap-to-open player sheet & horizontal swipe left/right on mini-player to change songs
+- **Structured Song Details Bottom Sheet**
+  - Lightweight, smooth `BottomSheetDialog` for song metadata and technical audio details
+  - Clean sectioned categories (Format, File Info, Tags)
+  - Single-tap copy-to-clipboard for any metadata value
+- **Enhanced Toolbar & Sorting**
+  - Independent Display View button on header toolbar
+  - Enhanced sorting by file size, duration, title, artist, album, and date added
+  - ASC/DESC sort order toggle & persistent sort preferences
+- **Advanced Range Filtering**
+  - Filter songs by file size and duration with interactive range sliders
+  - Active filter badge indicator on header toolbar
   - Persistent filter preferences
-- Playback improvements
+- **Playback & Stability Improvements**
   - Automatically pauses playback when volume reaches zero
-- Stability improvements
-  - StrictMode compliance fixes
-  - ViewPager2 adapter state restoration fixes
+  - StrictMode compliance fixes & optimized Coil 3 image loading fallbacks
 
 ## Screenshots
 | ![Screenshot 1](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_1.jpg) | ![Screenshot 2](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_2.jpg) | ![Screenshot 3](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_3.jpg) |
