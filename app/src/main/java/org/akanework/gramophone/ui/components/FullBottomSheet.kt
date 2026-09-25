@@ -280,7 +280,7 @@ class FullBottomSheet
     private val bottomSheetFullSeekBar: SeekBar
     private val bottomSheetFullSlider: Slider
     val bottomSheetFullLyricView: LyricsView by lazy { (parent as ViewGroup).findViewById(R.id.lyric_frame)!! }
-    private val progressDrawable: SquigglyProgress
+    private var progressDrawable: SquigglyProgress
     private var pqs: PlaylistQueueSheet? = null
 
     init {
@@ -435,15 +435,15 @@ class FullBottomSheet
                 .getDimensionPixelSize(R.dimen.media_seekbar_progress_stroke_width)
                 .toFloat()
 
-        bottomSheetFullSeekBar.progressDrawable = SquigglyProgress().also {
-            progressDrawable = it
-            it.waveLength = seekBarProgressWavelength
-            it.lineAmplitude = seekBarProgressAmplitude
-            it.phaseSpeed = seekBarProgressPhase
-            it.strokeWidth = seekBarProgressStrokeWidth
-            it.transitionEnabled = true
-            it.animate = false
+        progressDrawable = SquigglyProgress().apply {
+            waveLength = seekBarProgressWavelength
+            lineAmplitude = seekBarProgressAmplitude
+            phaseSpeed = seekBarProgressPhase
+            strokeWidth = seekBarProgressStrokeWidth
+            transitionEnabled = true
+            animate = false
         }
+        bottomSheetFullSeekBar.progressDrawable = progressDrawable
 
 
 
@@ -1336,6 +1336,8 @@ class FullBottomSheet
             colorOnSurfaceTransition.apply {
                 addUpdateListener { animation ->
                     val progressColor = animation.animatedValue as Int
+                    bottomSheetInfoDetailsButton.iconTint =
+                        ColorStateList.valueOf(progressColor)
                     bottomSheetTimerButton.iconTint =
                         ColorStateList.valueOf(progressColor)
                     bottomSheetPlaybackSpeedButton.iconTint =
@@ -1465,6 +1467,8 @@ class FullBottomSheet
                 lyricsHighlightTlColor,
             )
 
+            bottomSheetInfoDetailsButton.iconTint =
+                ColorStateList.valueOf(colorOnSurface)
             bottomSheetTimerButton.iconTint =
                 ColorStateList.valueOf(colorOnSurface)
             bottomSheetPlaybackSpeedButton.iconTint =
@@ -1520,9 +1524,7 @@ class FullBottomSheet
             coverAdapter.setItems(list)
 
             val currentIdx = player.currentMediaItemIndex
-            if (coverViewPager.currentItem != currentIdx) {
-                coverViewPager.setCurrentItem(currentIdx, true)
-            }
+            coverViewPager.setCurrentItem(currentIdx, false)
             if (DynamicColors.isDynamicColorAvailable() &&
                 prefs.getBooleanStrict("content_based_color", true)
             ) {
