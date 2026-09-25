@@ -761,11 +761,11 @@ class FullBottomSheet
     private fun refreshSettings(key: String?) {
         if (key == null || key == "default_progress_bar") {
             if (prefs.getBooleanStrict("default_progress_bar", false)) {
-                bottomSheetFullSlider.visibility = VISIBLE
-                bottomSheetFullSeekBar.visibility = GONE
-            } else {
                 bottomSheetFullSlider.visibility = GONE
                 bottomSheetFullSeekBar.visibility = VISIBLE
+            } else {
+                bottomSheetFullSlider.visibility = VISIBLE
+                bottomSheetFullSeekBar.visibility = GONE
             }
         }
         if (key == null || key == "audio_quality_info") {

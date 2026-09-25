@@ -519,11 +519,11 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
 
     private fun updateSliderVisibility() {
         if (prefs.getBooleanStrict("default_progress_bar", false)) {
-            timeSlider.visibility = View.VISIBLE
-            timeSeekbar.visibility = View.GONE
-        } else {
             timeSlider.visibility = View.GONE
             timeSeekbar.visibility = View.VISIBLE
+        } else {
+            timeSlider.visibility = View.VISIBLE
+            timeSeekbar.visibility = View.GONE
         }
     }
 
